@@ -52,6 +52,8 @@ func AppendFloat(dst []byte, f float64, fmt byte, prec, bitSize int) []byte {
 	return genericFtoa(dst, f, fmt, prec, bitSize)
 }
 
+var RyuEnabled = true
+
 func genericFtoa(dst []byte, val float64, fmt byte, prec, bitSize int) []byte {
 	var bits uint64
 	var flt *floatInfo
@@ -108,12 +110,18 @@ func genericFtoa(dst []byte, val float64, fmt byte, prec, bitSize int) []byte {
 	// Negative precision means "only as much as needed to be exact."
 	shortest := prec < 0
 	if shortest {
-		// Try Grisu3 algorithm.
-		f := new(extFloat)
-		lower, upper := f.AssignComputeBounds(mant, exp, neg, flt)
 		var buf [32]byte
 		digs.d = buf[:]
-		ok = f.ShortestDecimal(&digs, &lower, &upper)
+		if RyuEnabled && bitSize == 64 {
+			// Use Ryu algorithm
+			RyuShortest(&digs, mant, exp)
+			ok = true
+		} else {
+			// Try Grisu3 algorithm.
+			f := new(extFloat)
+			lower, upper := f.AssignComputeBounds(mant, exp, neg, flt)
+			ok = f.ShortestDecimal(&digs, &lower, &upper)
+		}
 		if !ok {
 			return bigFtoa(dst, prec, fmt, neg, mant, exp, flt)
 		}

@@ -124,6 +124,7 @@ var powersOfTen = [...]extFloat{
 	{0x9e19db92b4e31ba9, 1013, false},  // 10^324
 	{0xeb96bf6ebadf77d9, 1039, false},  // 10^332
 	{0xaf87023b9bf0ee6b, 1066, false},  // 10^340
+	{0x82c730bec1cac960, 1093, false},  // 10^348
 }
 
 // floatBits returns the bits of the float64 that best approximates

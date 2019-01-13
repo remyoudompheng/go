@@ -198,6 +198,7 @@ var ftoaBenches = []struct {
 	{"Float", 339.7784, 'g', -1, 64},
 	{"Exp", -5.09e75, 'g', -1, 64},
 	{"NegExp", -5.11e-95, 'g', -1, 64},
+	{"LongExp", 1.234567890123456e-78, 'g', -1, 64},
 
 	{"Big", 123456789123456789123456789, 'g', -1, 64},
 	{"BinaryExp", -1, 'b', -1, 64},
@@ -207,6 +208,7 @@ var ftoaBenches = []struct {
 	{"32Point", 339.7784, 'g', -1, 32},
 	{"32Exp", -5.09e25, 'g', -1, 32},
 	{"32NegExp", -5.11e-25, 'g', -1, 32},
+	{"32Shortest", 1.234567e-8, 'g', -1, 32},
 
 	{"64Fixed1", 123456, 'e', 3, 64},
 	{"64Fixed2", 123.456, 'e', 3, 64},
@@ -214,7 +216,14 @@ var ftoaBenches = []struct {
 	{"64Fixed4", 1.23456e-78, 'e', 3, 64},
 
 	// Trigger slow path (see issue #15672).
-	{"Slowpath64", 622666234635.3213e-320, 'e', -1, 64},
+	// The shortest is: 8.034137530808823e+43
+	{"Slowpath64", 8.03413753080882349e+43, 'e', -1, 64},
+	// This denormal is pathological because the lower/upper
+	// halfways to neighboring floats are:
+	// 622666234635.321003e-320 ~= 622666234635.321e-320
+	// 622666234635.321497e-320 ~= 622666234635.3215e-320
+	// making it hard to find the 3rd digit
+	{"SlowpathDenormal64", 622666234635.3213e-320, 'e', -1, 64},
 }
 
 func BenchmarkFormatFloat(b *testing.B) {
