@@ -23,6 +23,9 @@ func TestRyuShortest(t *testing.T) {
 		// power of two: the bounds are x-1<<31 and x+1<<32
 		// taking incorrect bounds leads to shortening.
 		1 << 85,
+		// negative power of 2,
+		math.Ldexp(1, -1006),
+		math.Ldexp(1, -1003),
 
 		622666234635.3213e-320,
 		3.0702409010742164e-151,

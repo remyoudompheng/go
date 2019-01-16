@@ -379,6 +379,8 @@ func ryuDigits32(d *decimalSlice, lower, central, upper uint32,
 		// the "round-up" logic hides the problem.
 		if l == c && !lok && c < u {
 			c++
+			cdigit = 0
+			cup = false
 		}
 		trimmed++
 		// Remember trimmed digits of c
