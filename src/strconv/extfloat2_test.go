@@ -105,6 +105,59 @@ func oldShortest(d *ShortDecimal, mant uint64, exp int) {
 	}
 }
 
+func TestRyuFixed(t *testing.T) {
+	tests := []fixedTest{
+		{1, 5}, // 1.0000
+
+		{0.9, 1},    // 0.9
+		{0.09, 1},   // 0.1
+		{0.0999, 1}, // 0.1
+		{0.05, 1},   // 0.1
+		{0.5, 1},    // 0.5
+		{1.5, 1},    // 2
+		// Rounding final '5' in exact decimal
+		{616658659874087.25, 16}, // 6.166586598740872e14
+		{593409733467153.75, 16}, // 5.934097334671538e14
+		{4428582144510765, 15},   // 4.42858214451076e14
+		// Smallest denormal
+		{5e-324, 15}, // 4.94065645841247e-324
+	}
+	for _, test := range tests {
+		mant, exp := mantExp(test.x)
+
+		dold := NewShortDecimal()
+		dnew := NewShortDecimal()
+		// slow algo
+		oldFixed(&dold, mant, exp, test.prec)
+		// new algo
+		RyuFixed(&dnew, mant, exp, test.prec, &Float64info)
+		if !dold.Equals(&dnew) {
+			t.Error("ERROR:")
+		}
+		t.Logf("%b %.17g %v %v", test.x, test.x,
+			ShowDecimal(&dold), ShowDecimal(&dnew))
+	}
+}
+
+func oldFixed(d *ShortDecimal, mant uint64, exp int, prec int) {
+	const mantbits = 52
+
+	if prec <= 15 {
+		// try fast algorithm when the number of digits is reasonable.
+		f := new(ExtFloat)
+		_, _ = f.AssignComputeBounds(mant, exp, false, &Float64info)
+		ok := f.FixedDecimal(d, prec)
+		if ok {
+			return
+		}
+	}
+	dec := new(Decimal)
+	dec.Assign(mant)
+	dec.Shift(exp - int(mantbits))
+	dec.Round(prec)
+	*d = ToShort(dec)
+}
+
 func TestRyuFtoa(t *testing.T) {
 	// A standard desktop machine can check a few million numbers
 	// per second.
@@ -175,6 +228,46 @@ func TestRyuFtoaHard(t *testing.T) {
 	}
 }
 
+func TestRyuFtoaFixed(t *testing.T) {
+	// A standard desktop machine can check a few million numbers
+	// per second.
+	N := int(1e7)
+	if testing.Short() {
+		N = 1e6
+	}
+	ok, ko := 0, 0
+	t.Logf("testing %d random numbers with fast and slow FormatFloat", N)
+
+	dold := NewShortDecimal()
+	dnew := NewShortDecimal()
+	for i := 0; i < N; i++ {
+		bits := uint64(i) * 0xdeadbeefdeadbeef
+		bits = (bits << 1) >> 1 // clear sign bit
+		if bits>>52 == 2047 {
+			// only finite numbers
+			bits ^= (1 << 60)
+		}
+		x := math.Float64frombits(bits)
+		prec := (int(i)*0xc0dedead)%16 + 1
+
+		mant, exp := mantExp(x)
+
+		// slow algo
+		oldFixed(&dold, mant, exp, prec)
+		// new algo
+		RyuFixed(&dnew, mant, exp, prec, &Float64info)
+
+		// compare
+		if !dold.Equals(&dnew) {
+			t.Logf("%b old=%s new=%s", x, ShowDecimal(&dold), ShowDecimal(&dnew))
+			ko++
+		} else {
+			ok++
+		}
+	}
+	t.Logf("%d ok, %d ko", ok, ko)
+}
+
 func mantExp(x float64) (mant uint64, exp int) {
 	const (
 		mantbits = 52
@@ -200,8 +293,9 @@ func mantExp(x float64) (mant uint64, exp int) {
 }
 
 func TestRyuPowersOfTen(t *testing.T) {
-	for q := int64(0); q < 336; q++ {
-		// positive exponents
+	for q := int64(0); q <= 339; q++ {
+		// positive exponents (324 to 339) are needed for fixed
+		// precision handling of denormals
 		pow := big.NewInt(10)
 		pow = pow.Exp(pow, big.NewInt(q), nil)
 		sz := pow.BitLen()
@@ -216,8 +310,8 @@ func TestRyuPowersOfTen(t *testing.T) {
 		exp := sz - 128
 		//t.Logf(`{Hi: 0x%016x, Lo: 0x%016x, Exp: %d},`, hi, lo, exp)
 		expect := ExtFloat128{Hi: hi, Lo: lo, Exp: exp}
-		if RyuPowersOfTen[q] != expect {
-			t.Errorf("wrong entry")
+		if int(q) >= len(RyuPowersOfTen) || RyuPowersOfTen[q] != expect {
+			t.Errorf("wrong entry, wants %#v", expect)
 		}
 	}
 
@@ -396,6 +490,53 @@ func BenchmarkRyuShortestHard(b *testing.B) {
 			for i := 0; i < b.N; i++ {
 				mant, exp := mantExp(c)
 				RyuShortest(&d, mant, exp)
+			}
+		})
+	}
+}
+
+type fixedTest struct {
+	x    float64
+	prec int
+}
+
+var fixedBenches = []fixedTest{
+	{0.9, 1}, // 0.9
+	{0.5, 1}, // 0.5
+	{1.5, 1}, // 2
+	{123456, 3},
+	{123.456, 3},
+	{1.23456e+78, 3},
+	{1.23456e-78, 3},
+	{1.23456e-78, 15},
+	{4428582144510765, 15}, // 4.42858214451076e14
+	{1.2345678912345654e+249, 15},
+	{5e-324, 15}, // 4.94065645841247e-324
+	{1.23456e-78, 16},
+	{4428582144510765, 16}, // 4.42858214451076e14
+	{1.2345678912345654e+249, 16},
+	{5e-324, 16}, // 4.94065645841247e-324
+}
+
+func BenchmarkRyuFixed(b *testing.B) {
+	d := NewShortDecimal()
+	for _, c := range fixedBenches {
+		b.Run(fmt.Sprintf("%v/%d", c.x, c.prec), func(b *testing.B) {
+			for i := 0; i < b.N; i++ {
+				mant, exp := mantExp(c.x)
+				RyuFixed(&d, mant, exp, c.prec, &Float64info)
+			}
+		})
+	}
+}
+
+func BenchmarkOldFixed(b *testing.B) {
+	d := NewShortDecimal()
+	for _, c := range fixedBenches {
+		b.Run(fmt.Sprintf("%v/%d", c.x, c.prec), func(b *testing.B) {
+			for i := 0; i < b.N; i++ {
+				mant, exp := mantExp(c.x)
+				oldFixed(&d, mant, exp, c.prec)
 			}
 		})
 	}

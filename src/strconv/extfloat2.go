@@ -169,6 +169,145 @@ func RyuShortest(d *decimalSlice, mant uint64, exp int) {
 	return
 }
 
+// RyuFixed is a variation of the original Ryu algorithm for fixed precision
+// output. It can output 16 digits reliably.
+func RyuFixed(d *decimalSlice, mant uint64, exp int, prec int, flt *floatInfo) {
+	if prec > 16 {
+		panic("RyuFixed called with prec > 16")
+	}
+	// Fixed precision output proceeds as shortest output
+	// except that we don't compute bounds, and that denormals
+	// must be processed as normalized floats (and require higher
+	// multipliers).
+	//
+	// In shortest mode, denormals are processed with their native
+	// exponent and lose precision.
+	if mant == 0 {
+		d.nd, d.dp = 0, 0
+		return
+	}
+	// substract mantbits to interpret mantissa as integer
+	e2 := exp - int(flt.mantbits)
+	// renormalize denormals to a 53-bit mantissa.
+	if b := bits.Len64(mant); b < 53 {
+		mant = mant << uint(53-b)
+		e2 += int(b) - 53
+	}
+	// multiply by a power of 10. It is required to know
+	// whether the computation is exact.
+	var q int
+	var pow *extfloat128 // a representation of 10^q
+	if e2 < 0 {
+		// Find 10^q *larger* than 2^-exp
+		e := uint(-e2)
+		q = int(Exp2toExponent10(e) + 1)
+		pow = &RyuPowersOfTen[q]
+	} else {
+		// Divide by a power of 10 strictly less than 2^exp
+		q = int(Exp2toExponent10(uint(e2)) - 1)
+		if q < 0 {
+			q = 0
+		}
+		pow = &RyuInvPowersOfTen[q]
+		q = -q
+	}
+	// Is it an exact computation?
+	exact := false
+	switch {
+	case q > 55:
+		// large positive powers of ten are not exact
+	case 54 >= q && q >= 0:
+		exact = true
+	case 0 > q && q >= -22:
+		// division by a power of ten might be exact
+		// if mantissas are multiples of 5
+		if divisibleByPower5(mant, -q) {
+			exact = true
+		}
+	default:
+		// division by 10^23 cannot be exact
+		// as 5^23 has 54 bits.
+	}
+
+	// Compute Floor(x*10^q)
+	di, d0 := ryuMultiply(mant, pow.Hi, pow.Lo)
+	dexp2 := e2 + pow.Exp + 64 + 55
+	// If computation was an exact division, lower bits must be ignored.
+	if q < 0 && exact {
+		d0 = true
+	}
+	// Remove extra lower bits and keep rounding info.
+	extra := uint(-dexp2)
+	extramask := uint64(1<<extra - 1)
+
+	di, dfrac := di>>extra, di&extramask
+	roundUp := false
+	if exact {
+		// If we computed an exact product, d + 1/2
+		// should round to d+1 if 'd' is odd.
+		roundUp = dfrac > 1<<(extra-1) ||
+			(dfrac == 1<<(extra-1) && !d0) ||
+			(dfrac == 1<<(extra-1) && d0 && di&1 == 1)
+	} else {
+		// otherwise, d+1/2 always rounds up because
+		// we truncated below.
+		roundUp = dfrac>>(extra-1) == 1
+	}
+	if dfrac != 0 {
+		d0 = false
+	}
+	// Proceed to the requested number of digits
+	size := 16
+	max := uint64pow10[prec]
+	if di > max {
+		// We reduce to exactly prec digits.
+		size = prec
+	} else {
+		// d is larger than the original 53-bit mantissa
+		// so has at least 16 digits. But prec <= 16,
+		// so d has 16 digits exactly.
+		size = 16
+	}
+	trimmed := 0
+	for di >= max {
+		a, b := di/10, di%10
+		di = a
+		trimmed++
+		if b > 5 {
+			roundUp = true
+		} else if b < 5 {
+			roundUp = false
+		} else { // b == 5
+			roundUp = !d0 || (d0 && di&1 == 1)
+		}
+		// update d0 for next iteration
+		d0 = d0 && b == 0
+	}
+	if roundUp {
+		di++
+	}
+	if di >= max {
+		// Happens if di was originally 99999....xx
+		di = di / 10
+		trimmed++
+	}
+	// render digits
+	n := uint(size)
+	d.nd = int(size)
+	for v := di; v > 0; {
+		v1, v2 := v/10, v%10
+		v = v1
+		if int(n) == d.nd && v2 == 0 {
+			d.nd-- // trim trailing zeros
+			trimmed++
+		}
+		n--
+		d.d[n&31] = byte(v2 + '0')
+	}
+	d.dp = d.nd + trimmed - q
+	return
+}
+
 func divisibleByPower5(m uint64, k int) bool {
 	for i := 0; i < k; i++ {
 		a, b := m/5, m%5
@@ -670,6 +809,10 @@ var RyuPowersOfTen = [...]extfloat128{
 	{Hi: 0x933e37a534cbaae7, Lo: 0x8e91b962f7b6f159, Exp: 979},
 	{Hi: 0xb80dc58e81fe95a1, Lo: 0x723627bbb5a4adb0, Exp: 982},
 	{Hi: 0xe61136f2227e3b09, Lo: 0xcec3b1aaa30dd91c, Exp: 985},
+	{Hi: 0x8fcac257558ee4e6, Lo: 0x213a4f0aa5e8a7b1, Exp: 989},
+	{Hi: 0xb3bd72ed2af29e1f, Lo: 0xa988e2cd4f62d19d, Exp: 992},
+	{Hi: 0xe0accfa875af45a7, Lo: 0x93eb1b80a33b8605, Exp: 995},
+	{Hi: 0x8c6c01c9498d8b88, Lo: 0xbc72f130660533c3, Exp: 999},
 }
 
 // ryuInvPowersOfTen[q] stores floating-point representations of 1/10^q,
