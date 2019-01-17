@@ -490,14 +490,29 @@ func atof64(s string) (f float64, err error) {
 				}
 			}
 			// Try another fast path.
-			ext := new(extFloat)
-			if ok := ext.AssignDecimal(mantissa, exp, neg, trunc, &float64info); ok {
-				b, ovf := ext.floatBits(&float64info)
-				f = math.Float64frombits(b)
-				if ovf {
-					err = rangeError(fnParseFloat, s)
+			if RyuEnabled && !trunc {
+				b, ovf, ok := RyuFromDecimal(mantissa, exp, &float64info)
+				if ok {
+					f = math.Float64frombits(b)
+					if neg {
+						f = -f
+					}
+					if ovf {
+						err = rangeError(fnParseFloat, s)
+					}
+					return f, err
 				}
-				return f, err
+			}
+			if !RyuEnabled {
+				ext := new(extFloat)
+				if ok := ext.AssignDecimal(mantissa, exp, neg, trunc, &float64info); ok {
+					b, ovf := ext.floatBits(&float64info)
+					f = math.Float64frombits(b)
+					if ovf {
+						err = rangeError(fnParseFloat, s)
+					}
+					return f, err
+				}
 			}
 		}
 	}

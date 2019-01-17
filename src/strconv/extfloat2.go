@@ -308,6 +308,128 @@ func RyuFixed(d *decimalSlice, mant uint64, exp int, prec int, flt *floatInfo) {
 	return
 }
 
+func RyuFromDecimal(mant uint64, exp int, flt *floatInfo) (fbits uint64, ovf, ok bool) {
+	// Conversion from decimal to binary floating-point
+	// can be achieved by reusing the same building blocks
+	// as the Ryū algorithm.
+	//
+	// Given a decimal mantissa, we can multiply by the requested
+	// power of ten using the same routines. The 64 bit result
+	// is guaranteed to be correctly truncated (floored), when
+	// the decimal mantissa fits in 55 bits.
+	//
+	// This covers 16-digit mantissas, and a few 17-digits values.
+
+	bitlen := bits.Len64(mant)
+	if bitlen > 55 {
+		return 0, false, false // cannot handle values that large.
+	}
+	// Shift mantissa to be exactly 55 bits.
+	mant <<= uint(55 - bitlen)
+	e2 := bitlen - 55
+
+	// multiply by a power of 10. It is required to know
+	// whether the computation is exact.
+	var pow *extfloat128 // a representation of 10^q
+	switch {
+	case exp > 309:
+		return 0x7ff << 52, true, true
+	case exp < -342:
+		return 0, false, true
+	case exp > 0:
+		pow = &RyuPowersOfTen[exp]
+	case exp == 0:
+		// no multiply
+	case exp < 0:
+		pow = &RyuInvPowersOfTen[-exp]
+	}
+	// Is it an exact computation?
+	exact := false
+	switch {
+	case exp > 55:
+		// large positive powers of ten are not exact
+	case 54 >= exp && exp >= 0:
+		exact = true
+	case 0 > exp && exp >= -25:
+		// division by a power of ten might be exact
+		// if mantissas are multiples of 5
+		if divisibleByPower5(mant, -exp) {
+			exact = true
+		}
+	default:
+		// division by 10^25 cannot be exact
+		// as 5^25 has 59 bits.
+	}
+
+	// Compute Floor(x*10^q)
+	var di uint64
+	var d0 bool
+	if exp == 0 {
+		di, d0 = mant, true
+		exact = true
+	} else {
+		di, d0 = ryuMultiply(mant, pow.Hi, pow.Lo)
+		e2 += pow.Exp + 64 + 55
+	}
+	// If computation was an exact division, lower bits must be ignored.
+	if exp < 0 && exact {
+		d0 = true
+	}
+	// Is exponent too low? Shrink mantissa for denormals.
+	blen := bits.Len64(di)
+	e2 += blen - 1
+	extra := uint(blen - 53) // number of lower bits to remove
+	if e2 < flt.bias+1 {
+		extra += uint(flt.bias + 1 - e2)
+		e2 = flt.bias + 1
+	}
+	if extra > uint(blen) {
+		return 0.0, false, true
+	}
+	// Compute correct rounding.
+	extramask := uint64(1<<extra - 1)
+	di, dfrac := di>>extra, di&extramask
+	roundUp := false
+	if exact {
+		// If we computed an exact product, d + 1/2
+		// should round to d+1 if 'd' is odd.
+		roundUp = dfrac > 1<<(extra-1) ||
+			(dfrac == 1<<(extra-1) && !d0) ||
+			(dfrac == 1<<(extra-1) && d0 && di&1 == 1)
+	} else {
+		// otherwise, d+1/2 always rounds up because
+		// we truncated below.
+		roundUp = dfrac>>(extra-1) == 1
+	}
+	if dfrac != 0 {
+		d0 = false
+	}
+	if roundUp {
+		di++
+	}
+
+	// Rounding might have added a bit; shift down.
+	if di == 2<<flt.mantbits {
+		di >>= 1
+		e2++
+	}
+
+	// Infinities.
+	if e2-flt.bias >= 1<<flt.expbits-1 {
+		// ±Inf
+		di = 0
+		e2 = 1<<flt.expbits - 1 + flt.bias
+		ovf = true
+	} else if di&(1<<flt.mantbits) == 0 {
+		// Denormalized?
+		e2 = flt.bias
+	}
+	// Assemble bits.
+	fbits = di & (uint64(1)<<flt.mantbits - 1)
+	fbits |= uint64((e2-flt.bias)&(1<<flt.expbits-1)) << flt.mantbits
+	return fbits, ovf, true
+}
+
 func divisibleByPower5(m uint64, k int) bool {
 	for i := 0; i < k; i++ {
 		a, b := m/5, m%5
@@ -1142,4 +1264,28 @@ var RyuInvPowersOfTen = [...]extfloat128{
 	{Hi: 0xf712b443bbd52b7b, Lo: 0xa5e9ec7501d523e5, Exp: -1181},
 	{Hi: 0xc5a890362fddbc62, Lo: 0xeb2189f734aa831e, Exp: -1184},
 	{Hi: 0x9e20735e8cb16382, Lo: 0x55b46e5f5d5535b1, Exp: -1187},
+	{Hi: 0xfd00b897478238d0, Lo: 0x8920b098955522b5, Exp: -1191},
+	{Hi: 0xca66fa129f9b60a6, Lo: 0xd41a26e077774ef7, Exp: -1194},
+	{Hi: 0xa1ebfb4219491a1f, Lo: 0x1014ebe6c5f90bf9, Exp: -1197},
+	{Hi: 0x818995ce7aa0e1b2, Lo: 0x7343efebd1940994, Exp: -1200},
+	{Hi: 0xcf42894a5dce35ea, Lo: 0x52064cac828675ba, Exp: -1204},
+	{Hi: 0xa5ced43b7e3e9188, Lo: 0x419ea3bd35385e2e, Exp: -1207},
+	{Hi: 0x84a57695fe98746d, Lo: 0x014bb630f7604b58, Exp: -1210},
+	{Hi: 0xd43bf0effdc0ba48, Lo: 0x0212bd1b2566def3, Exp: -1214},
+	{Hi: 0xa9c98d8ccb009506, Lo: 0x680efdaf511f18c3, Exp: -1217},
+	{Hi: 0x87d4713d6f33aa6b, Lo: 0x8672648c40e5ad69, Exp: -1220},
+	{Hi: 0xd953e8624b85dd78, Lo: 0xd71d6dad34a2af0e, Exp: -1224},
+	{Hi: 0xaddcb9e83c6b1793, Lo: 0xdf4abe242a1bbf3e, Exp: -1227},
+	{Hi: 0x8b16fb203055ac76, Lo: 0x4c3bcb5021afcc32, Exp: -1230},
+	{Hi: 0xde8b2b66b3bc4723, Lo: 0xad2c788035e61383, Exp: -1234},
+	{Hi: 0xb208ef855c969f4f, Lo: 0xbdbd2d335e51a936, Exp: -1237},
+	{Hi: 0x8e6d8c6ab0787f72, Lo: 0xfe30f0f5e50e20f8, Exp: -1240},
+	{Hi: 0xe3e27a444d8d98b7, Lo: 0xfd1b1b2308169b26, Exp: -1244},
+	{Hi: 0xb64ec836a47146f9, Lo: 0x9748e2826cdee285, Exp: -1247},
+	{Hi: 0x91d8a02bb6c10594, Lo: 0x79071b9b8a4be86a, Exp: -1250},
+	{Hi: 0xe95a99df8ace6f53, Lo: 0xf4d82c2c107973dd, Exp: -1254},
+	{Hi: 0xbaaee17fa23ebf76, Lo: 0x5d79bcf00d2df64a, Exp: -1257},
+	{Hi: 0x9558b4661b6565f8, Lo: 0x4ac7ca59a424c508, Exp: -1260},
+	{Hi: 0xeef453d6923bd65a, Lo: 0x113faa2906a13b40, Exp: -1264},
+	{Hi: 0xbf29dcaba82fdeae, Lo: 0x7432ee873880fc34, Exp: -1267},
 }

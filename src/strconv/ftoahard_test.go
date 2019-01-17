@@ -62,7 +62,7 @@ func GenerateHardFloat64s() []float64 {
 
 		if bits.Len64(y) == 54 {
 			f := math.Ldexp(float64(y>>1), e)
-			fmt.Printf("f=ldexp(%d,%d)=%v, f+=(%d+%.3e)e%d\n",
+			_ = fmt.Sprintf("f=ldexp(%d,%d)=%v, f+=(%d+%.3e)e%d\n",
 				y>>1, e, f, x, prec, -q)
 			hards = append(hards, f)
 		}
@@ -77,7 +77,7 @@ func GenerateHardFloat64s() []float64 {
 				x, y, prec = findFrac(a, b, bitlen)
 
 				f := math.Ldexp(float64(y>>1), e)
-				fmt.Printf("f=ldexp(%d,%d)=%v, f+=(%d+%.3e)e%d\n",
+				_ = fmt.Sprintf("f=ldexp(%d,%d)=%v, f+=(%d+%.3e)e%d\n",
 					y>>1, e, f, x, prec, -q)
 				hards = append(hards, f)
 			}

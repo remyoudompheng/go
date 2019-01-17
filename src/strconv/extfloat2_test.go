@@ -271,6 +271,74 @@ func TestRyuFtoaFixed(t *testing.T) {
 	t.Logf("%d ok, %d ko", ok, ko)
 }
 
+func TestRyuAtof(t *testing.T) {
+	// A standard desktop machine can check about 10e6 numbers/second.
+	N := int(1e7)
+	if testing.Short() {
+		N = 1e6
+	}
+	ok, ko := 0, 0
+	t.Logf("testing %d random numbers with fast and slow ParseFloat", N)
+
+	for i := 0; i < N; i++ {
+		mant := uint64(i) * 0xdeadbeefdeadbeef
+		mant &= (1<<55 - 1)
+		exp := (i % 640) - 342 // range (-342, 298)
+
+		fold := OldAtof(mant, exp)
+		bnew, _, ryuOk := RyuFromDecimal(mant, exp, &Float64info)
+		fnew := math.Float64frombits(bnew)
+
+		if !ryuOk || fold != fnew {
+			t.Logf("%de%d old=%v new=%v", mant, exp, fold, fnew)
+			ko++
+		} else {
+			ok++
+		}
+	}
+	t.Logf("%d ok, %d ko", ok, ko)
+}
+
+// TestRyuAtofCoverage tests coverage of fast algorithms for the shortest
+// representation of float64s. Grisu3 covers 99.5% of values, and naïve Ryū
+// covers 92.9% (when rejecting 17-digit mantissas over 55 bits).
+func TestRyuAtofCoverage(t *testing.T) {
+	N := int(1e7)
+	if testing.Short() {
+		N = 1e6
+	}
+	t.Logf("testing ParseFloat of the shortest representation of %d random float64s", N)
+
+	oldOk, ryuOk := 0, 0
+	for i := 0; i < N; i++ {
+		bits := uint64(i) * 0xdeadbeefdeadbeef
+		bits = (bits << 1) >> 1 // clear sign bit
+		if bits>>52 == 2047 {
+			// only finite numbers
+			bits ^= (1 << 60)
+		}
+		x := math.Float64frombits(bits)
+		s := FormatFloat(x, 'g', -1, 64)
+
+		// Compute decimal mantissa, exponent.
+		mant, exp := ReadFloat(s)
+		f1, ok1 := FastAtof(mant, exp)
+		b2, _, ok2 := RyuFromDecimal(mant, exp, &Float64info)
+		f2 := math.Float64frombits(b2)
+		if ok1 {
+			oldOk++
+		}
+		if ok2 {
+			ryuOk++
+		}
+		if ok1 && ok2 && f1 != f2 {
+			t.Fatalf("inconsistent results %s => %v %v", s, f1, f2)
+		}
+	}
+	t.Logf("%d successes with old fast paths", oldOk)
+	t.Logf("%d successes with Ryū", ryuOk)
+}
+
 func mantExp(x float64) (mant uint64, exp int) {
 	const (
 		mantbits = 52
@@ -318,7 +386,7 @@ func TestRyuPowersOfTen(t *testing.T) {
 		}
 	}
 
-	for q := 0; q < 320; q++ {
+	for q := 0; q < 344; q++ {
 		// negative exponents
 		// Let's compute 2^128 * 8^q / 5^q, which is never an integer
 		pow := big.NewInt(5)
@@ -342,8 +410,8 @@ func TestRyuPowersOfTen(t *testing.T) {
 		exp := sz - 256 - 4*q
 		//t.Logf(`{Hi: 0x%016x, Lo: 0x%016x, Exp: %d},`, hi, lo, exp)
 		expect := ExtFloat128{Hi: hi, Lo: lo, Exp: exp}
-		if RyuInvPowersOfTen[q] != expect {
-			t.Errorf("wrong entry")
+		if int(q) >= len(RyuInvPowersOfTen) || RyuInvPowersOfTen[q] != expect {
+			t.Errorf("wrong entry, wants %#v", expect)
 		}
 	}
 }
@@ -541,6 +609,59 @@ func BenchmarkOldFixed(b *testing.B) {
 				mant, exp := mantExp(c.x)
 				oldFixed(&d, mant, exp, c.prec)
 			}
+		})
+	}
+}
+
+var ryuAtofBenches = []struct {
+	name string
+	mant uint64
+	exp  int
+}{
+	{"64Decimal", 33909, 0},
+	{"64Float", 3397784, -4},
+	{"64FloatExp", 509, 73},
+	{"64Denormal", 6226662346353213, -324},
+	// Almost halfway, with less than 1e-16 ulp difference
+	// with only 16 decimal digits.
+	{"64HalfwayHard1", 6808957268280643, 116},  // from ftoahard
+	{"64HalfwayHard2", 4334126125515466, -225}, // from ftoahard
+	// Only 3e-13*ulp larger than halfway between denormals,
+	{"64HalfwayDenormal", 168514038588815, -323},
+	// Few digits, but 9.11691642378e-312 = 0x1ada385d67b.7fffffff5d9...p-1074
+	// so naive, rounded 64-bit arithmetic is not enough to round it correctly.
+	{"64HalfwayDenormalShort", 911691642378, -323},
+	// 1.62420278e-315 = 0x1398359e.7fffe022p-1074,
+	// should parsable using 64-bit arithmetic.
+	{"64HalfwayDenormalVeryShort", 162420278, -323},
+	// https://www.exploringbinary.com/php-hangs-on-numeric-value-2-2250738585072011e-308/
+	{"64Denormal", 22250738585072011, -324},
+}
+
+func BenchmarkRyuAtof(b *testing.B) {
+	for _, c := range ryuAtofBenches {
+		b.Run(fmt.Sprintf("%de%d", c.mant, c.exp), func(b *testing.B) {
+			var v uint64
+			for i := 0; i < b.N; i++ {
+				f, ovf, ok := RyuFromDecimal(c.mant, c.exp, &Float64info)
+				if ovf || !ok {
+					b.Fatal("could not parse")
+				}
+				v = f
+			}
+			b.Logf("parsed to %v", math.Float64frombits(v))
+		})
+	}
+}
+
+func BenchmarkOldAtof(b *testing.B) {
+	for _, c := range ryuAtofBenches {
+		b.Run(fmt.Sprintf("%de%d", c.mant, c.exp), func(b *testing.B) {
+			var f float64
+			for i := 0; i < b.N; i++ {
+				f = OldAtof(c.mant, c.exp)
+			}
+			b.Logf("parsed to %v", f)
 		})
 	}
 }

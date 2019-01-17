@@ -4,6 +4,10 @@
 
 package strconv
 
+import (
+	"math"
+)
+
 var (
 	BitSizeError = bitSizeError
 	BaseError    = baseError
@@ -51,4 +55,47 @@ func ShowDecimal(d *decimalSlice) string {
 	}
 	exp := d.dp - 1
 	return string(d.d[0]) + "." + string(d.d[1:d.nd]) + "e" + Itoa(exp)
+}
+
+func OldAtof(mant uint64, exp int) float64 {
+	if f, ok := atof64exact(mant, exp, false); ok {
+		return f
+	}
+
+	// Try another fast path.
+	ext := new(extFloat)
+	if ok := ext.AssignDecimal(mant, exp, false, false, &float64info); ok {
+		b, _ := ext.floatBits(&float64info)
+		return math.Float64frombits(b)
+	}
+
+	var d decimal
+	d.Assign(mant)
+	d.dp += exp
+	b, _ := d.floatBits(&float64info)
+	return math.Float64frombits(b)
+}
+
+// FastAtof optimistically performs Atof, and only tries the float64 and Grisu fast paths.
+func FastAtof(mant uint64, exp int) (float64, bool) {
+	if f, ok := atof64exact(mant, exp, false); ok {
+		return f, true
+	}
+
+	// Try another fast path.
+	ext := new(extFloat)
+	if ok := ext.AssignDecimal(mant, exp, false, false, &float64info); ok {
+		b, _ := ext.floatBits(&float64info)
+		return math.Float64frombits(b), true
+	}
+
+	return 0, false
+}
+
+func ReadFloat(s string) (mant uint64, exp int) {
+	mantissa, exp, _, trunc, ok := readFloat(s)
+	if !ok || trunc {
+		panic("readFloat failure")
+	}
+	return mantissa, exp
 }
