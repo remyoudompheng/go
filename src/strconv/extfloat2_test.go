@@ -251,7 +251,7 @@ func TestRyuFtoaFixed(t *testing.T) {
 			bits ^= (1 << 60)
 		}
 		x := math.Float64frombits(bits)
-		prec := (int(i)*0xc0dedead)%16 + 1
+		prec := int((uint64(i)*0xc0dedead)%16 + 1)
 
 		mant, exp := mantExp(x)
 
