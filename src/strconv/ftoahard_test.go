@@ -51,20 +51,36 @@ func GenerateHardFloat64s() []float64 {
 			a = a.Exp(a, big.NewInt(int64(q)), nil)
 			b := big.NewInt(1)
 			b = b.Lsh(b, uint(-(e - 1)))
-			x, y, prec = findFrac(a, b)
+			x, y, prec = findFrac(a, b, 54)
 		} else {
 			a := big.NewInt(10)
 			a = a.Exp(a, big.NewInt(int64(-q)), nil)
 			b := big.NewInt(1)
 			b = b.Lsh(b, uint(e-1))
-			x, y, prec = findFrac(b, a)
+			x, y, prec = findFrac(b, a, 54)
 		}
 
 		if bits.Len64(y) == 54 {
 			f := math.Ldexp(float64(y>>1), e)
-			_ = fmt.Sprintf("f=ldexp(%d,%d)=%v, f+=(%d+%.3e)e%d\n",
+			fmt.Printf("f=ldexp(%d,%d)=%v, f+=(%d+%.3e)e%d\n",
 				y>>1, e, f, x, prec, -q)
 			hards = append(hards, f)
+		}
+
+		if e == -1074 {
+			for bitlen := 30; bitlen < 54; bitlen++ {
+				// also find hard denormals
+				a := big.NewInt(10)
+				a = a.Exp(a, big.NewInt(int64(q)), nil)
+				b := big.NewInt(1)
+				b = b.Lsh(b, uint(-(e - 1)))
+				x, y, prec = findFrac(a, b, bitlen)
+
+				f := math.Ldexp(float64(y>>1), e)
+				fmt.Printf("f=ldexp(%d,%d)=%v, f+=(%d+%.3e)e%d\n",
+					y>>1, e, f, x, prec, -q)
+				hards = append(hards, f)
+			}
 		}
 	}
 	return hards
@@ -72,11 +88,11 @@ func GenerateHardFloat64s() []float64 {
 
 // findFrac returns a fraction x/y very close to u/v,
 // such that y*(u/v) = x+prec
-func findFrac(u, v *big.Int) (x, y uint64, prec float64) {
+func findFrac(u, v *big.Int, bitlen int) (x, y uint64, prec float64) {
 	q := new(big.Rat).SetFrac(u, v)
 	for seed := uint64(1); seed < 90; seed += 3 {
-		x, y = contFrac(u, v, seed)
-		if bits.Len64(y) == 54 && y%2 == 1 && x%10 == 0 {
+		x, y = contFrac(u, v, seed, 1<<uint(bitlen-1))
+		if bits.Len64(y) == bitlen && y%2 == 1 && x%10 == 0 {
 			break
 		}
 	}
@@ -86,10 +102,10 @@ func findFrac(u, v *big.Int) (x, y uint64, prec float64) {
 	return x, y, prec
 }
 
-func contFrac(u, v *big.Int, seed uint64) (x, y uint64) {
+func contFrac(u, v *big.Int, seed uint64, max uint64) (x, y uint64) {
 	var a, b uint64 = 1, 0
 	var c, d uint64 = 0, seed
-	for c < 1<<53 {
+	for c < max {
 		if v.BitLen() == 0 {
 			break
 		}
@@ -107,6 +123,10 @@ func contFrac(u, v *big.Int, seed uint64) (x, y uint64) {
 }
 
 var hardFloatSamples = []float64{
+	// Denormals
+	math.Ldexp(328742302, -1074),
+	math.Ldexp(1845284427387, -1074),
+	math.Ldexp(341076211242912, -1074),
 	// Difficulty < 1e-15
 	math.Ldexp(6417092537094053, -748),
 	math.Ldexp(7675932596762664, -653),

@@ -393,27 +393,45 @@ func TestRoundTrip32(t *testing.T) {
 	t.Logf("tested %d float32's", count)
 }
 
-func BenchmarkAtof64Decimal(b *testing.B) {
-	for i := 0; i < b.N; i++ {
-		ParseFloat("33909", 64)
-	}
+var atofBenches = []struct {
+	name    string
+	arg     string
+	bitSize int
+}{
+	{"64Decimal", "33909", 64},
+	{"64Float", "339.7784", 64},
+	{"64FloatExp", "-5.09e75", 64},
+	{"64Big", "123456789123456789123456789", 64},
+	{"64Denormal", "622666234635.3213e-320", 64},
+	{"32Decimal", "33909", 32},
+	{"32Float", "339.778", 32},
+	{"32FloatExp", "12.3456e32", 32},
+	// Numbers halfway (or close to halfway) between 2 floats
+	{"64HalfwayInt", "100000000000000016777215", 64},
+	{"64HalfwayInt", "100000000000000016777216", 64},
+	// Almost halfway, with less than 1e-16 ulp difference
+	// with only 16 decimal digits.
+	{"64HalfwayHard1", "6808957268280643e116", 64},   // from ftoahard
+	{"64HalfwayHard2", "4.334126125515466e-210", 64}, // from ftoahard
+	// Only 3e-13*ulp larger than halfway between denormals,
+	{"64HalfwayDenormal", "1.68514038588815e-309", 64},
+	// Few digits, but 9.11691642378e-312 = 0x1ada385d67b.7fffffff5d9...p-1074
+	// so naive, rounded 64-bit arithmetic is not enough to round it correctly.
+	{"64HalfwayDenormalShort", "9.11691642378e-312", 64},
+	// 1.62420278e-315 = 0x1398359e.7fffe022p-1074,
+	// should parsable using 64-bit arithmetic.
+	{"64HalfwayDenormalVeryShort", "1.62420278e-315", 64},
+	// https://www.exploringbinary.com/php-hangs-on-numeric-value-2-2250738585072011e-308/
+	{"64Denormal", "2.2250738585072011e-308", 64},
 }
 
-func BenchmarkAtof64Float(b *testing.B) {
-	for i := 0; i < b.N; i++ {
-		ParseFloat("339.7784", 64)
-	}
-}
-
-func BenchmarkAtof64FloatExp(b *testing.B) {
-	for i := 0; i < b.N; i++ {
-		ParseFloat("-5.09e75", 64)
-	}
-}
-
-func BenchmarkAtof64Big(b *testing.B) {
-	for i := 0; i < b.N; i++ {
-		ParseFloat("123456789123456789123456789", 64)
+func BenchmarkAtof(b *testing.B) {
+	for _, c := range atofBenches {
+		b.Run(c.arg, func(b *testing.B) {
+			for i := 0; i < b.N; i++ {
+				ParseFloat(c.arg, c.bitSize)
+			}
+		})
 	}
 }
 
@@ -426,24 +444,6 @@ func BenchmarkAtof64RandomBits(b *testing.B) {
 func BenchmarkAtof64RandomFloats(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		ParseFloat(benchmarksRandomNormal[i%1024], 64)
-	}
-}
-
-func BenchmarkAtof32Decimal(b *testing.B) {
-	for i := 0; i < b.N; i++ {
-		ParseFloat("33909", 32)
-	}
-}
-
-func BenchmarkAtof32Float(b *testing.B) {
-	for i := 0; i < b.N; i++ {
-		ParseFloat("339.778", 32)
-	}
-}
-
-func BenchmarkAtof32FloatExp(b *testing.B) {
-	for i := 0; i < b.N; i++ {
-		ParseFloat("12.3456e32", 32)
 	}
 }
 
