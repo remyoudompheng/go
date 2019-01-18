@@ -320,13 +320,25 @@ func RyuFromDecimal(mant uint64, exp int, flt *floatInfo) (fbits uint64, ovf, ok
 	//
 	// This covers 16-digit mantissas, and a few 17-digits values.
 
+	const maxMantBitlen = 55 // could be larger?
 	bitlen := bits.Len64(mant)
-	if bitlen > 55 {
-		return 0, false, false // cannot handle values that large.
+	var e2 int
+	switch {
+	case bitlen < maxMantBitlen:
+		mant <<= uint(maxMantBitlen - bitlen)
+		e2 = bitlen - maxMantBitlen
+	case bitlen == maxMantBitlen:
+		e2 = 0
+	case bitlen > maxMantBitlen:
+		zeros := bits.TrailingZeros64(mant)
+		if zeros >= bitlen-maxMantBitlen {
+			// Actually only maxMantBitlen significant bits
+			mant = mant >> uint(bitlen-maxMantBitlen)
+			e2 = bitlen - maxMantBitlen
+		} else {
+			return 0, false, false // cannot handle values that large.
+		}
 	}
-	// Shift mantissa to be exactly 55 bits.
-	mant <<= uint(55 - bitlen)
-	e2 := bitlen - 55
 
 	// multiply by a power of 10. It is required to know
 	// whether the computation is exact.

@@ -335,8 +335,10 @@ func TestRyuAtofCoverage(t *testing.T) {
 			t.Fatalf("inconsistent results %s => %v %v", s, f1, f2)
 		}
 	}
-	t.Logf("%d successes with old fast paths", oldOk)
-	t.Logf("%d successes with Ryū", ryuOk)
+	t.Logf("%d successes with old fast paths (%.2f%% failures)",
+		oldOk, 100*float64(N-oldOk)/float64(N))
+	t.Logf("%d successes with Ryū (%.2f%% failures)",
+		ryuOk, 100*float64(N-ryuOk)/float64(N))
 }
 
 func mantExp(x float64) (mant uint64, exp int) {
