@@ -165,7 +165,7 @@ func oldFixed(d *ShortDecimal, mant uint64, exp int, prec int) {
 	*d = ToShort(dec)
 }
 
-func TestRyuFtoa(t *testing.T) {
+func TestRyuFtoaRandom(t *testing.T) {
 	// A standard desktop machine can check a few million numbers
 	// per second.
 	N := int(1e7)
@@ -235,7 +235,7 @@ func TestRyuFtoaHard(t *testing.T) {
 	}
 }
 
-func TestRyuFtoaFixed(t *testing.T) {
+func TestRyuFtoaFixedRandom(t *testing.T) {
 	// A standard desktop machine can check a few million numbers
 	// per second.
 	N := int(1e7)
@@ -275,7 +275,7 @@ func TestRyuFtoaFixed(t *testing.T) {
 	t.Logf("%d ok, %d ko", ok, ko)
 }
 
-func TestRyuAtof(t *testing.T) {
+func TestRyuAtofRandom(t *testing.T) {
 	// A standard desktop machine can check about 10e6 numbers/second.
 	N := int(1e7)
 	if testing.Short() {
@@ -385,7 +385,6 @@ func TestRyuPowersOfTen(t *testing.T) {
 		hi := new(big.Int).SetBytes(digits[:8]).Uint64()
 		lo := new(big.Int).SetBytes(digits[8:]).Uint64()
 		exp := sz - 128
-		//t.Logf(`{Hi: 0x%016x, Lo: 0x%016x, Exp: %d},`, hi, lo, exp)
 		expect := ExtFloat128{Hi: hi, Lo: lo, Exp: exp}
 		if int(q) >= len(RyuPowersOfTen) || RyuPowersOfTen[q] != expect {
 			t.Errorf("wrong entry, wants %#v", expect)
@@ -414,7 +413,6 @@ func TestRyuPowersOfTen(t *testing.T) {
 			lo++ // round up
 		}
 		exp := sz - 256 - 4*q
-		//t.Logf(`{Hi: 0x%016x, Lo: 0x%016x, Exp: %d},`, hi, lo, exp)
 		expect := ExtFloat128{Hi: hi, Lo: lo, Exp: exp}
 		if int(q) >= len(RyuInvPowersOfTen) || RyuInvPowersOfTen[q] != expect {
 			t.Errorf("wrong entry, wants %#v", expect)
@@ -422,9 +420,9 @@ func TestRyuPowersOfTen(t *testing.T) {
 	}
 }
 
+// TestRyuExp2toExp10 checks that Exp2toExponent10(i) == math.Floor(i * log10(2))
 func TestRyuExp2toExp10(t *testing.T) {
 	for i := 1; i < 1600; i++ {
-		// Is it really math.Floor(i * log10(2))
 		exact := math.Ln2 / math.Ln10 * float64(i)
 		approx := Exp2toExponent10(uint(i))
 
