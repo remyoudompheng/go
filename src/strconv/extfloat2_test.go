@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"math"
 	"math/big"
+	"math/bits"
 	. "strconv"
 	"testing"
 )
@@ -437,114 +438,143 @@ func TestRyuExp2toExp10(t *testing.T) {
 	}
 }
 
-/*
-// TestRyuNoCarry checks the fundamental assumption of the Ryu algorithm.
-// Let x = mant × 2**exp be a floating-point number used as upper/lower bound (mant <= 2**54)
-// Let 10^q = (M + ε) × 2**E be the corresponding entry in the ryuPowersOfTen table.
-// then the upper 64 bits of x × 10^q can always be computed by omitting ε,
-// i.e. the contribution of ε cannot generate enough carries in the multiplication.
-func TestRyuNoCarry(t *testing.T) {
-	t.Skip("skip")
-	// Let B = 54 be the number of bits in mant
-	// Then mant × 10^q = mant × M + mant × ε
-	//                  = H + L + mant × ε
-	// where H are the upper 64 bits
-	//       L are the lower 64+B bits
-	//       mant×ε is less than 2**B
+// TestRyuMultiplyNoCarry checks the fundamental assumption of the Ryu algorithm,
+// which is that "ryuMultiply" upper 64 bits are always the exact truncation
+// of m * 10^q even if the tables contain rounded floating-point versions of 10^q.
+func TestRyuMultiplyCarry(t *testing.T) {
+	// The tables contain (HI, LO, EXP) such that:
+	// 10^q = (HI << 64 + LO ± ε) * 2**EXP
+	// where ε is a residue < 1 and the sign of ±ε is the same as q.
 	//
-	// Note than L = mant × M mod 2**(64+B)
-	// so it is enough to prove that L < 2**(64+B) - 2**B always
-	// to prevent the carry from propagating to H.
-	// This typically happens if M is pseudo-random enough.
+	// We are using ryuMultiply with input 55-bit wide (or more):
+	//     k × 10^q = (K << 128 + H << 64 + L ± kε) * 2 ** EXP
+	// so to return correct 64 bits, the upper 9 bits of H must be proved correct.
+	// In other words, the hidden residue kε (less than k) must never
+	// overflow when added to (k*P) mod (2^119), which would happen if:
+	//     k × P = m × 2^119 + r
+	//     r < k or r > 2^119-k (depending on the sign of ±ε above)
+	// where P = (HI<<64|LO) mod 2^119
 	//
-	// In Grisu3, where the precision is 64 bits:
-	//     H are the upper 64 bits
-	//     L are the lower B bits
-	//     mant×ε can be up to B bits
-	// so H is usually uncertain by 1.
-	testNoCarry(t, 0xbd2b1a2d54a54a58, 0xd5c4b8f4a5c4d7ef)
+	// Equivalently, we are looking for rational numbers m/k such that:
+	//     0 < abs(m/k - P/2^119) < 1/2^119
+	// with sign dependent on the sign of q, which is what this test is doing.
+
+	check := func(inBits, outBits uint, pow ExtFloat128, e10 int) {
+		// tests that when multiplying k (size inBits)
+		// we can extract reliably the outBits top bits.
+		Z := big.NewInt(1)
+		Z = Z.Lsh(Z, 128+inBits-outBits)
+		P := new(big.Int).SetUint64(pow.Hi)
+		P = P.Lsh(P, 64)
+		P = P.Or(P, new(big.Int).SetUint64(pow.Lo))
+
+		Pm1 := new(big.Int).Set(P)
+		if e10 > 0 {
+			Pm1 = Pm1.Add(Pm1, big.NewInt(1))
+		} else {
+			Pm1 = Pm1.Sub(Pm1, big.NewInt(1))
+		}
+
+		_, q, err := findRational(
+			new(big.Rat).SetFrac(Pm1, Z),
+			new(big.Rat).SetFrac(P, Z))
+		if err != nil {
+			// overflow ensures that any 64-bit multiplier will be safe.
+			return
+		}
+		product := new(big.Int).SetUint64(q)
+		product = product.Mul(product, P)
+		// If q has more than inBits, multiplier of that size are safe.
+		if bits.Len64(q) <= int(inBits) {
+			t.Errorf("10^%d -> 0x%x%016xp%d worst %d (%d bits, product=%x)",
+				e10, pow.Hi, pow.Lo, pow.Exp, q, bits.Len64(q), product)
+		} else if bits.Len64(q) <= int(inBits+2) {
+			// no carry issue, but that was close.
+			t.Logf("edge case (in=%db, out=%db): 10^%d -> 0x%x%016xp%d worst %d (%d bits, product=%x)",
+				inBits, outBits, e10, pow.Hi, pow.Lo, pow.Exp, q, bits.Len64(q), product)
+		}
+	}
+
+	for exp, pow := range RyuInvPowersOfTen {
+		if exp <= 27 {
+			// Multiplier 5^exp is the worst case (exact division),
+			// we already know that.
+			continue
+		}
+		check(55, 64, pow, -exp) // for ftoa
+		check(60, 54, pow, -exp) // for atof
+	}
+	for exp, pow := range RyuPowersOfTen {
+		if exp < 50 {
+			continue // exact power of ten, no problem.
+		}
+		check(55, 64, pow, exp) // for ftoa
+		check(60, 54, pow, exp) // for atof
+	}
 }
 
-// testNoCarry checks that if m = hi<<64|lo
-// then k*m mod W = 2**(64+B) is always less than 2**(64+B) - 2**B.
-func testNoCarry(t *testing.T, hi, lo uint64) {
-	const B = 54
+// findRational looks for a small rational p/q such that a < p/q < b.
+// It panics if no such result can be found using uint64s.
+func findRational(a, b *big.Rat) (p, q uint64, err error) {
+	// The search will be based on continued fractions and the Stern-Brocot tree.
+	// Assuming the continued fraction expansions of a and b are:
+	//     [x1, x2, ...,xn, y, ...]
+	//     [x1, x2, ...,xn, z, ...]
+	// where y < z, then
+	//   p/q = [x1, x2, ...,xn, y+1]
+	// is the fraction with smallest denominator between a and b.
+	// See https://en.wikipedia.org/wiki/Stern%E2%80%93Brocot_tree
+	//     https://en.wikipedia.org/wiki/Continued_fraction#Best_rational_within_an_interval
 
-	mask := big.NewInt(1)
-	mask = mask.Lsh(mask, 64+B)
-	mask = mask.Sub(mask, big.NewInt(1))
-	// The bound that should not be passed
-	bound := big.NewInt(1)
-	bound = bound.Lsh(bound, 64+B)
-	bound = bound.Sub(bound, big.NewInt(1<<B))
-	// Prepare m as big integer, truncated to 128-B bits.
-	m := new(big.Int).SetUint64(hi)
-	m = m.Lsh(m, 64)
-	m = m.Add(m, new(big.Int).SetUint64(lo))
-	m = m.And(m, mask)
-
-	// Look for a small stride such that (stride*m) mod W is very small.
-	// We want a stride of order 2**(B/2) to reduce the complexity to sqrt(W).
-	x := big.NewInt(0)
-	var stride uint64
-	step := ^big.Word(0)
-	for s := uint64(1); s < 1<<(B/2); s++ {
-		x = x.Add(x, m)
-		x = x.And(x, mask)
-		if x.BitLen() > 64 && x.Bits()[1] < step {
-			step = x.Bits()[1]
-			stride = s
-			println(stride, step)
-		}
+	if a.Cmp(b) == 0 {
+		return 0, 0, fmt.Errorf("a == b")
 	}
-	if stride == 0 {
-		t.Fatal("no small stride")
+	pa, qa := a.Num(), a.Denom()
+	pb, qb := b.Num(), b.Denom()
+	var pp, qq uint64
+	p, pp = 1, 0
+	q, qq = 0, 1
+	overflow := func(x, y uint64) bool {
+		return y > 0 && x >= (1<<64-1)/y
 	}
-	t.Logf("m=%s, found stride %d, stride*m~=%d<<64",
-		m, stride, step)
-	println("stride", stride, "step", step)
-
-	multiply := func(n *big.Int, k uint64) {
-		n.SetUint64(k)
-		n.Mul(n, m)
-		n.And(n, mask)
-		if n.Cmp(bound) >= 0 {
-			t.Fatalf("found %d * %s = %x, bound=%x", k, m, n, bound)
+	for qa.BitLen() > 0 && qb.BitLen() > 0 {
+		// construct the xi as Euclidean quotients
+		q1, r1 := new(big.Int), new(big.Int)
+		q1, r1 = q1.DivMod(pa, qa, r1)
+		q2, r2 := new(big.Int), new(big.Int)
+		q2, r2 = q2.DivMod(pb, qb, r2)
+		if !q1.IsUint64() || !q2.IsUint64() {
+			return 0, 0, fmt.Errorf("overflow %s, %s", q1, q2)
 		}
-	}
-
-	// Now look for bad values.
-	// All possible multipliers can be written as:
-	// k = b + a*stride
-	// It is not necessary to test all a's if we can skip.
-	skip := (1 << (B - 2)) / step
-	t.Logf("using skip=%d", skip)
-	println("skip", skip, "max strides", (1<<B)/stride)
-	for b := uint64(1); b <= stride; b++ {
-		if b%1000 == 0 {
-			println("b =", b)
-		}
-		k := b
-		x := new(big.Int)
-		for k < 1<<B {
-			multiply(x, k)
-
-			topWord := big.Word(0)
-			if x.BitLen() > 64 {
-				topWord = x.Bits()[1]
+		x1 := q1.Uint64()
+		x2 := q2.Uint64()
+		// ...and accumulate in p, q.
+		// Actually we are not interested in p so overflow will be ignored.
+		switch {
+		case x1 < x2:
+			if overflow(x1+1, q) {
+				return 0, 0, fmt.Errorf("overflow %d*%d+%d", q, x1+1, qq)
 			}
-			if topWord < 3<<(B-2) {
-				//println("testing", k, "product", x.String(), "limit", bound.String(), "skip", skipWord*skip)
-				k += uint64(skip) * stride
-				println("now k =", k)
-			} else {
-				// be careful
-				k += stride
+			return p*(x1+1) + pp, q*(x1+1) + qq, nil
+		case x1 > x2:
+			if overflow(x2+1, q) {
+				return 0, 0, fmt.Errorf("overflow %d*%d+%d", q, x2+1, qq)
 			}
+			return p*(x2+1) + pp, q*(x2+1) + qq, nil
+		default:
+			if overflow(x1, q) {
+				return 0, 0, fmt.Errorf("overflow %d*%d+%d", q, x1, qq)
+			}
+			p, pp = p*x1+pp, p
+			q, qq = q*x1+qq, q
 		}
+		pa, qa = qa, r1
+		pb, qb = qb, r2
 	}
+	// If we reached zero remainder, it means that either
+	// a == b, or that either a or b is actually the shortest rational.
+	return p, q, nil
 }
-*/
 
 func BenchmarkRyuShortest(b *testing.B) {
 	d := NewShortDecimal()
