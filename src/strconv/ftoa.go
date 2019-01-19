@@ -52,7 +52,7 @@ func AppendFloat(dst []byte, f float64, fmt byte, prec, bitSize int) []byte {
 	return genericFtoa(dst, f, fmt, prec, bitSize)
 }
 
-var RyuEnabled = true
+var ryuEnabled = true
 
 func genericFtoa(dst []byte, val float64, fmt byte, prec, bitSize int) []byte {
 	var bits uint64
@@ -112,9 +112,9 @@ func genericFtoa(dst []byte, val float64, fmt byte, prec, bitSize int) []byte {
 	if shortest {
 		var buf [32]byte
 		digs.d = buf[:]
-		if RyuEnabled && bitSize == 64 {
+		if ryuEnabled && bitSize == 64 {
 			// Use Ryu algorithm
-			RyuShortest(&digs, mant, exp)
+			ryuShortest(&digs, mant, exp)
 			ok = true
 		} else {
 			// Try Grisu3 algorithm.
@@ -148,8 +148,8 @@ func genericFtoa(dst []byte, val float64, fmt byte, prec, bitSize int) []byte {
 		}
 		var buf [24]byte
 		digs.d = buf[:]
-		if RyuEnabled && digits <= 16 {
-			RyuFixed(&digs, mant, exp, digits, flt)
+		if ryuEnabled && digits <= 16 {
+			ryuFixed(&digs, mant, exp, digits, flt)
 			ok = true
 		} else if digits <= 15 {
 			// try fast algorithm when the number of digits is reasonable.

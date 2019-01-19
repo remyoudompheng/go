@@ -49,7 +49,7 @@ The implementation is as follows:
   which is still larger than A
 */
 
-func RyuShortest(d *decimalSlice, mant uint64, exp int) {
+func ryuShortest(d *decimalSlice, mant uint64, exp int) {
 	if mant == 0 {
 		d.nd, d.dp = 0, 0
 		return
@@ -64,15 +64,15 @@ func RyuShortest(d *decimalSlice, mant uint64, exp int) {
 	if e2 < 0 {
 		// Find 10^q *larger* than 2^-e2
 		e := uint(-e2)
-		q = int(Exp2toExponent10(e) + 1)
-		pow = &RyuPowersOfTen[q]
+		q = int(exp2toExponent10(e) + 1)
+		pow = &ryuPowersOfTen[q]
 	} else {
 		// Divide by a power of 10 strictly less than 2^e2
-		q = int(Exp2toExponent10(uint(e2)) - 1)
+		q = int(exp2toExponent10(uint(e2)) - 1)
 		if q < 0 {
 			q = 0
 		}
-		pow = &RyuInvPowersOfTen[q]
+		pow = &ryuInvPowersOfTen[q]
 		q = -q
 	}
 	// We are going to multiply by 10^q using 128-bit arithmetic.
@@ -169,11 +169,11 @@ func RyuShortest(d *decimalSlice, mant uint64, exp int) {
 	return
 }
 
-// RyuFixed is a variation of the original Ryu algorithm for fixed precision
+// ryuFixed is a variation of the original Ryu algorithm for fixed precision
 // output. It can output 16 digits reliably.
-func RyuFixed(d *decimalSlice, mant uint64, exp int, prec int, flt *floatInfo) {
+func ryuFixed(d *decimalSlice, mant uint64, exp int, prec int, flt *floatInfo) {
 	if prec > 16 {
-		panic("RyuFixed called with prec > 16")
+		panic("ryuFixed called with prec > 16")
 	}
 	// Fixed precision output proceeds as shortest output
 	// except that we don't compute bounds, and that denormals
@@ -200,15 +200,15 @@ func RyuFixed(d *decimalSlice, mant uint64, exp int, prec int, flt *floatInfo) {
 	if e2 < 0 {
 		// Find 10^q *larger* than 2^-exp
 		e := uint(-e2)
-		q = int(Exp2toExponent10(e) + 1)
-		pow = &RyuPowersOfTen[q]
+		q = int(exp2toExponent10(e) + 1)
+		pow = &ryuPowersOfTen[q]
 	} else {
 		// Divide by a power of 10 strictly less than 2^exp
-		q = int(Exp2toExponent10(uint(e2)) - 1)
+		q = int(exp2toExponent10(uint(e2)) - 1)
 		if q < 0 {
 			q = 0
 		}
-		pow = &RyuInvPowersOfTen[q]
+		pow = &ryuInvPowersOfTen[q]
 		q = -q
 	}
 	// Is it an exact computation?
@@ -308,7 +308,7 @@ func RyuFixed(d *decimalSlice, mant uint64, exp int, prec int, flt *floatInfo) {
 	return
 }
 
-func RyuFromDecimal(mant uint64, exp int, flt *floatInfo) (fbits uint64, ovf, ok bool) {
+func ryuFromDecimal(mant uint64, exp int, flt *floatInfo) (fbits uint64, ovf, ok bool) {
 	// Conversion from decimal to binary floating-point
 	// can be achieved by reusing the same building blocks
 	// as the Ryū algorithm.
@@ -349,11 +349,11 @@ func RyuFromDecimal(mant uint64, exp int, flt *floatInfo) (fbits uint64, ovf, ok
 	case exp < -342:
 		return 0, false, true
 	case exp > 0:
-		pow = &RyuPowersOfTen[exp]
+		pow = &ryuPowersOfTen[exp]
 	case exp == 0:
 		// no multiply
 	case exp < 0:
-		pow = &RyuInvPowersOfTen[-exp]
+		pow = &ryuInvPowersOfTen[-exp]
 	}
 	// Is it an exact computation?
 	exact := false
@@ -594,8 +594,8 @@ func computeBounds(mant uint64, exp int) (lower, central, upper uint64, e2 int) 
 	}
 }
 
-// Exp2toExponent10 returns q = math.Floor(e * log10(2))
-func Exp2toExponent10(e uint) uint {
+// exp2toExponent10 returns q = math.Floor(e * log10(2))
+func exp2toExponent10(e uint) uint {
 	if e > 1600 {
 		panic("out of approx range")
 	}
@@ -624,7 +624,7 @@ type extfloat128 struct {
 
 // ryuPowersOfTen[q] stores floating-point representations of 10^q,
 // with 128-bit mantissas. The mantissa is always rounded down.
-var RyuPowersOfTen = [...]extfloat128{
+var ryuPowersOfTen = [...]extfloat128{
 	{Hi: 0x8000000000000000, Lo: 0x0000000000000000, Exp: -127},
 	{Hi: 0xa000000000000000, Lo: 0x0000000000000000, Exp: -124},
 	{Hi: 0xc800000000000000, Lo: 0x0000000000000000, Exp: -121},
@@ -971,7 +971,7 @@ var RyuPowersOfTen = [...]extfloat128{
 // with 128-bit mantissas. The mantissa is always rounded up (ceil(m)),
 // as in the traditional "divide by multiply high and shift right" method.
 // This allows obtaining correct results when computing 10^q * (1/10^q).
-var RyuInvPowersOfTen = [...]extfloat128{
+var ryuInvPowersOfTen = [...]extfloat128{
 	{Hi: 0x8000000000000000, Lo: 0x0000000000000000, Exp: -127},
 	{Hi: 0xcccccccccccccccc, Lo: 0xcccccccccccccccd, Exp: -131},
 	{Hi: 0xa3d70a3d70a3d70a, Lo: 0x3d70a3d70a3d70a4, Exp: -134},

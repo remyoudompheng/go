@@ -490,8 +490,8 @@ func atof64(s string) (f float64, err error) {
 				}
 			}
 			// Try another fast path.
-			if RyuEnabled && !trunc {
-				b, ovf, ok := RyuFromDecimal(mantissa, exp, &float64info)
+			if ryuEnabled && !trunc {
+				b, ovf, ok := ryuFromDecimal(mantissa, exp, &float64info)
 				if ok {
 					f = math.Float64frombits(b)
 					if neg {
@@ -503,7 +503,7 @@ func atof64(s string) (f float64, err error) {
 					return f, err
 				}
 			}
-			if !RyuEnabled {
+			if !ryuEnabled {
 				ext := new(extFloat)
 				if ok := ext.AssignDecimal(mantissa, exp, neg, trunc, &float64info); ok {
 					b, ovf := ext.floatBits(&float64info)
