@@ -467,7 +467,6 @@ func ryuDigits(d *decimalSlice, lower, central, upper uint64,
 		lok = lok && llo == 0
 		c0 = c0 && clo == 0
 		cup = (clo > 5e8) || (clo == 5e8 && cup)
-		d.nd = 0
 		ryuDigits32(d, lhi, uint32(central/1e9), uhi,
 			lok, c0, cup, 0)
 		d.dp += 9
@@ -487,11 +486,23 @@ func ryuDigits(d *decimalSlice, lower, central, upper uint64,
 		ryuDigits32(d, llo, clo, ulo,
 			lok, c0, cup, d.nd+8)
 	}
+	// trim trailing zeros
+	for d.nd > 0 && d.d[d.nd-1] == '0' {
+		d.nd--
+	}
 }
 
 // ryuDigits32 emits decimal digits for a number less than 1e9.
 func ryuDigits32(d *decimalSlice, lower, central, upper uint32,
 	lok, c0, cup bool, endindex int) {
+	if upper == 0 {
+		if endindex > 0 {
+			d.dp = endindex
+		} else {
+			d.nd, d.dp = 0, 0
+		}
+		return
+	}
 	trimmed := 0
 	// Remember last trimmed digit to check for round-up.
 	// c0 will be used to remember zeroness of following digits.
@@ -504,6 +515,8 @@ func ryuDigits32(d *decimalSlice, lower, central, upper uint32,
 		u, _ := upper/10, upper%10
 		lok = lok && ldigit == 0
 		if !lok && l == u {
+			// don't trim the last digit as it is forbidden to go below l
+			// other, trim and exit now.
 			break
 		}
 		// Check that we didn't cross the lower boundary.
@@ -521,6 +534,9 @@ func ryuDigits32(d *decimalSlice, lower, central, upper uint32,
 		c0 = c0 && cNextDigit == 0
 		cNextDigit = int(cdigit)
 		lower, central, upper = l, c, u
+		if l == u {
+			break
+		}
 	}
 	// should we round up?
 	if trimmed > 0 {

@@ -20,6 +20,10 @@ func TestRyuShortest(t *testing.T) {
 		123451234512345,
 		12345671234567890, // bounds are integers
 		123456123456123456,
+		// trailing zeros
+		1230000,
+		12300000000,
+		1.23e22, // exact integer with few digits
 		// power of two: the bounds are x-1<<31 and x+1<<32
 		// taking incorrect bounds leads to shortening.
 		1 << 85,

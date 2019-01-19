@@ -38,7 +38,7 @@ func ToShort(d *decimal) decimalSlice {
 }
 
 func (d1 *ShortDecimal) Equals(d2 *ShortDecimal) bool {
-	if d1.nd != d2.nd && d1.dp != d2.dp {
+	if d1.nd != d2.nd || d1.dp != d2.dp {
 		return false
 	}
 	for i := 0; i < d1.nd; i++ {
