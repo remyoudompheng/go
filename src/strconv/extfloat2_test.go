@@ -166,6 +166,42 @@ func oldFixed(d *ShortDecimal, mant uint64, exp int, prec int) {
 	*d = ToShort(dec)
 }
 
+var ryuAtofTests = []struct {
+	mant   uint64
+	exp    int
+	expect float64
+}{
+	{33909, 0, 33909},
+	{3397784, -4, 339.7784},
+	{509, 73, 509e73},
+	// an exact float (mantissa is 5^27)
+	{7450580596923828125, -27, 7.450580596923828e-09},
+	// a denormal
+	{6226662346353213, -324, 6.226662346353213e-309},
+	// difficult almost halfway cases
+	// (less than 1e-16 ulp difference)
+	{6808957268280643, 116, 6.808957268280643e+131},  // from ftoahard
+	{4334126125515466, -225, 4.334126125515466e-210}, // from ftoahard
+	// difficult denormal, almost halfway
+	{168514038588815, -323, 1.68514038588815e-309},
+	// Hard halfways with N digits
+	{23399415873862403, 53, 2.3399415873862405e+69},
+	{500016682268521616, 229, 5.000166822685216e+246},
+	{1803654133444410489, 51, 1.8036541334444103e+69},
+	{10027399025072458414, 140, 1.002739902507246e+159},
+}
+
+func TestRyuFromDecimal(t *testing.T) {
+	for _, x := range ryuAtofTests {
+		b, _, _ := RyuFromDecimal(x.mant, x.exp, &Float64info)
+		f := math.Float64frombits(b)
+		if f != x.expect {
+			t.Errorf("parsing %de%d, expect %v (%b), got %v (%b)",
+				x.mant, x.exp, x.expect, x.expect, f, f)
+		}
+	}
+}
+
 func TestRyuFtoaRandom(t *testing.T) {
 	// A standard desktop machine can check a few million numbers
 	// per second.
@@ -277,7 +313,7 @@ func TestRyuFtoaFixedRandom(t *testing.T) {
 }
 
 func TestRyuAtofRandom(t *testing.T) {
-	// A standard desktop machine can check about 10e6 numbers/second.
+	// A standard desktop machine can check a few million numbers/second.
 	N := int(1e7)
 	if testing.Short() {
 		N = 1e6
@@ -287,7 +323,6 @@ func TestRyuAtofRandom(t *testing.T) {
 
 	for i := 0; i < N; i++ {
 		mant := uint64(i) * 0xdeadbeefdeadbeef
-		mant &= (1<<55 - 1)
 		exp := (i % 640) - 342 // range (-342, 298)
 
 		fold := OldAtof(mant, exp)
@@ -305,8 +340,9 @@ func TestRyuAtofRandom(t *testing.T) {
 }
 
 // TestRyuAtofCoverage tests coverage of fast algorithms for the shortest
-// representation of float64s. Grisu3 covers 99.5% of values, and naïve Ryū
-// covers 92.9% (when rejecting 17-digit mantissas over 55 bits).
+// representation of float64s. Grisu3 covers 99.5% of values, and we accept
+// all of them, since the shortest decimal representation always has
+// at most 17 digits.
 func TestRyuAtofCoverage(t *testing.T) {
 	N := int(1e7)
 	if testing.Short() {
@@ -439,51 +475,73 @@ func TestRyuExp2toExp10(t *testing.T) {
 }
 
 // TestRyuMultiplyNoCarry checks the fundamental assumption of the Ryu algorithm,
-// which is that "ryuMultiply" upper 64 bits are always the exact truncation
+// which is that "ryuMultiply" always returns the exact truncation
 // of m * 10^q even if the tables contain rounded floating-point versions of 10^q.
 func TestRyuMultiplyCarry(t *testing.T) {
 	// The tables contain (HI, LO, EXP) such that:
 	// 10^q = (HI << 64 + LO ± ε) * 2**EXP
 	// where ε is a residue < 1 and the sign of ±ε is the same as q.
 	//
-	// We are using ryuMultiply with input 55-bit wide (or more):
+	// We are using ryuMultiply with 55-bit wide inputs:
 	//     k × 10^q = (K << 128 + H << 64 + L ± kε) * 2 ** EXP
-	// so to return correct 64 bits, the upper 9 bits of H must be proved correct.
-	// In other words, the hidden residue kε (less than k) must never
-	// overflow when added to (k*P) mod (2^119), which would happen if:
-	//     k × P = m × 2^119 + r
-	//     r < k or r > 2^119-k (depending on the sign of ±ε above)
-	// where P = (HI<<64|LO) mod 2^119
+	// so to return the correct 119-bit right shift,
+	// the hidden residue kε (less than k) must never
+	// overflow when added to (k*P) mod (2^119).
 	//
-	// Equivalently, we are looking for rational numbers m/k such that:
-	//     0 < abs(m/k - P/2^119) < 1/2^119
-	// with sign dependent on the sign of q, which is what this test is doing.
+	// In simplest words, we want to avoid:
+	//     k × P >> 119 == m
+	//     k × 10^q >> (119+EXP) == m+1
+	// which happens when:
+	//     P/2^119 < (m+1)/k < 10^q/2^(119+EXP)
+	//
+	// If q < 0, the bad situation is:
+	//     10^q/2^(119+EXP) < m/k < P/2^119
 
 	check := func(inBits, outBits uint, pow ExtFloat128, e10 int) {
 		// tests that when multiplying k (size inBits)
-		// we can extract reliably the outBits top bits.
-		Z := big.NewInt(1)
-		Z = Z.Lsh(Z, 128+inBits-outBits)
+		// we can extract reliably the outBits top bits.a
+		rShift := 127 + inBits - outBits
+
+		// Prepare P/2^rShift
 		P := new(big.Int).SetUint64(pow.Hi)
 		P = P.Lsh(P, 64)
 		P = P.Or(P, new(big.Int).SetUint64(pow.Lo))
-
-		Pm1 := new(big.Int).Set(P)
+		Z := big.NewInt(1)
+		Z = Z.Lsh(Z, rShift)
+		rat1 := new(big.Rat).SetFrac(P, Z)
+		// Prepare 10^q/2^(119+pow.Exp)
+		rat2 := new(big.Rat)
 		if e10 > 0 {
-			Pm1 = Pm1.Add(Pm1, big.NewInt(1))
+			num := big.NewInt(10)
+			num = num.Exp(num, big.NewInt(int64(e10)), nil)
+			den := big.NewInt(1)
+			den = den.Lsh(den, rShift)
+			if pow.Exp > 0 {
+				den = den.Lsh(den, uint(pow.Exp))
+			} else {
+				num = num.Lsh(num, uint(pow.Exp))
+			}
+			rat2.SetFrac(num, den)
 		} else {
-			Pm1 = Pm1.Sub(Pm1, big.NewInt(1))
+			num := big.NewInt(1)
+			num = num.Lsh(num, uint(-pow.Exp))
+			den := big.NewInt(10)
+			den = den.Exp(den, big.NewInt(int64(-e10)), nil)
+			den = den.Lsh(den, rShift)
+			rat2.SetFrac(num, den)
 		}
 
-		_, q, err := findRational(
-			new(big.Rat).SetFrac(Pm1, Z),
-			new(big.Rat).SetFrac(P, Z))
+		_, q, err := findRational(rat1, rat2)
 		if err != nil {
-			// overflow ensures that any 64-bit multiplier will be safe.
+			// overflow ensures that any multiplier will be safe.
 			return
 		}
 		product := new(big.Int).SetUint64(q)
 		product = product.Mul(product, P)
+		// The numerator of the result of findRational is:
+		// product >> (127+inBits-outBits)
+		// +1 if e10 > 0
+
 		// If q has more than inBits, multiplier of that size are safe.
 		if bits.Len64(q) <= int(inBits) {
 			t.Errorf("10^%d -> 0x%x%016xp%d worst %d (%d bits, product=%x)",
@@ -501,15 +559,15 @@ func TestRyuMultiplyCarry(t *testing.T) {
 			// we already know that.
 			continue
 		}
-		check(55, 64, pow, -exp) // for ftoa
-		check(60, 54, pow, -exp) // for atof
+		check(55, 63, pow, -exp) // for ftoa, right shift by 119
+		check(62, 54, pow, -exp) // for atof, right shift by 135
 	}
 	for exp, pow := range RyuPowersOfTen {
 		if exp < 50 {
 			continue // exact power of ten, no problem.
 		}
-		check(55, 64, pow, exp) // for ftoa
-		check(60, 54, pow, exp) // for atof
+		check(55, 63, pow, exp) // for ftoa, right shift by 119
+		check(62, 54, pow, exp) // for atof, right shift by 135
 	}
 }
 
@@ -660,6 +718,11 @@ var ryuAtofBenches = []struct {
 	// with only 16 decimal digits.
 	{"64HalfwayHard1", 6808957268280643, 116},  // from ftoahard
 	{"64HalfwayHard2", 4334126125515466, -225}, // from ftoahard
+	// Hard halfways with N digits
+	{"64HalfwayHard17", 23399415873862403, 53},
+	{"64HalfwayHard18", 500016682268521616, 229},
+	{"64HalfwayHard19", 1803654133444410489, 51},
+	{"64HalfwayHardMax", 9223372036854775808, 41},
 	// Only 3e-13*ulp larger than halfway between denormals,
 	{"64HalfwayDenormal", 168514038588815, -323},
 	// Few digits, but 9.11691642378e-312 = 0x1ada385d67b.7fffffff5d9...p-1074

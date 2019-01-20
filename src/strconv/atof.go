@@ -193,7 +193,7 @@ func readFloat(s string) (mantissa uint64, exp int, neg, trunc, ok bool) {
 				continue
 			}
 			nd++
-			if ndMant < uint64digits {
+			if mantissa < 1<<64/10 { // 1 << 64 = 18446744073709551616
 				mantissa *= 10
 				mantissa += uint64(c - '0')
 				ndMant++

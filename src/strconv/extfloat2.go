@@ -314,30 +314,17 @@ func ryuFromDecimal(mant uint64, exp int, flt *floatInfo) (fbits uint64, ovf, ok
 	// as the Ryū algorithm.
 	//
 	// Given a decimal mantissa, we can multiply by the requested
-	// power of ten using the same routines. The 64 bit result
-	// is guaranteed to be correctly truncated (floored), when
-	// the decimal mantissa fits in 55 bits.
-	//
-	// This covers 16-digit mantissas, and a few 17-digits values.
+	// power of ten using the same routines. Then for any 64-bit
+	// multiplier, the result is correctly truncated by
+	// right-shift by 135 bits.
+	// (TestRyuMultiplyCarry shows no error for 62-bit multipliers,
+	// and no warning for 64-bit multipliers).
 
-	const maxMantBitlen = 55 // could be larger?
 	bitlen := bits.Len64(mant)
-	var e2 int
-	switch {
-	case bitlen < maxMantBitlen:
-		mant <<= uint(maxMantBitlen - bitlen)
-		e2 = bitlen - maxMantBitlen
-	case bitlen == maxMantBitlen:
-		e2 = 0
-	case bitlen > maxMantBitlen:
-		zeros := bits.TrailingZeros64(mant)
-		if zeros >= bitlen-maxMantBitlen {
-			// Actually only maxMantBitlen significant bits
-			mant = mant >> uint(bitlen-maxMantBitlen)
-			e2 = bitlen - maxMantBitlen
-		} else {
-			return 0, false, false // cannot handle values that large.
-		}
+	e2 := 0
+	if bitlen < 64 {
+		mant <<= uint(64 - bitlen)
+		e2 = bitlen - 64
 	}
 
 	// multiply by a power of 10. It is required to know
@@ -362,26 +349,27 @@ func ryuFromDecimal(mant uint64, exp int, flt *floatInfo) (fbits uint64, ovf, ok
 		// large positive powers of ten are not exact
 	case 54 >= exp && exp >= 0:
 		exact = true
-	case 0 > exp && exp >= -25:
+	case 0 > exp && exp >= -27:
 		// division by a power of ten might be exact
 		// if mantissas are multiples of 5
 		if divisibleByPower5(mant, -exp) {
 			exact = true
 		}
 	default:
-		// division by 10^25 cannot be exact
-		// as 5^25 has 59 bits.
+		// division by 10^28 cannot be exact
+		// as 5^28 has 66 bits.
 	}
 
-	// Compute Floor(x*10^q)
+	// Compute Floor(x*10^q). ryuMultiply2 returns
+	// 54 bits, enough to find a float64 mantissa.
 	var di uint64
 	var d0 bool
 	if exp == 0 {
 		di, d0 = mant, true
 		exact = true
 	} else {
-		di, d0 = ryuMultiply(mant, pow.Hi, pow.Lo)
-		e2 += pow.Exp + 64 + 55
+		di, d0 = ryuMultiply2(mant, pow.Hi, pow.Lo)
+		e2 += pow.Exp + ryuMultiply2Shift
 	}
 	// If computation was an exact division, lower bits must be ignored.
 	if exp < 0 && exact {
@@ -603,18 +591,34 @@ func exp2toExponent10(e uint) uint {
 	return (e * 78913) >> 18
 }
 
-// ryuMultiply returns the 64 highest bits of the product:
-// mant * (hi<<64|lo), where mant is a 55-bit integer.
+// ryuMultiply returns the 63 or 64 highest bits of the product:
+// mant * (hi<<64|lo), where mant is a 55-bit integer,
+// using a right shift by 119 bits.
 // Also the boolean is set to true if the result is "exact",
 // in the sense that all lower bits were zero.
 func ryuMultiply(mant uint64, hi, lo uint64) (uint64, bool) {
 	// long multiplication
-	mant <<= 9
 	l1, l0 := bits.Mul64(mant, lo)
 	h1, h0 := bits.Mul64(mant, hi)
 	mid, carry := bits.Add64(l1, h0, 0)
-	return h1 + carry, mid == 0 && l0 == 0
+	h1 += carry
+	return h1<<9 | mid>>55, mid<<9 == 0 && l0 == 0
 }
+
+// ryuMultiply2 is like ryuMultiply but takes a 64-bit multiplier
+// and returns at least 54 bits from the full product which is
+// 191 or 192 bit wide.
+// It computes mant*(hi<<64|lo) >> 135.
+func ryuMultiply2(mant uint64, hi, lo uint64) (uint64, bool) {
+	// long multiplication
+	l1, l0 := bits.Mul64(mant, lo)
+	h1, h0 := bits.Mul64(mant, hi)
+	mid, carry := bits.Add64(l1, h0, 0)
+	h1 += carry
+	return h1 >> 7, h1&(1<<7-1) == 0 && mid == 0 && l0 == 0
+}
+
+const ryuMultiply2Shift = 135
 
 type extfloat128 struct {
 	Hi  uint64

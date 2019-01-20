@@ -80,6 +80,11 @@ var atoftests = []atofTest{
 	{"+INFINITY", "+Inf", nil},
 	{"Infinity", "+Inf", nil},
 
+	// largest uint64
+	{"18446744073709551616", "1.8446744073709552e+19", nil},
+	{"18446744073709551612", "1.8446744073709552e+19", nil},
+	{"18446744073709551608", "1.8446744073709552e+19", nil},
+
 	// largest float64
 	{"1.7976931348623157e308", "1.7976931348623157e+308", nil},
 	{"-1.7976931348623157e308", "-1.7976931348623157e+308", nil},
@@ -158,6 +163,15 @@ var atoftests = []atofTest{
 	{"1.00000000000000011102230246251565404236316680908203126", "1.0000000000000002", nil},
 	// Slightly higher, but you have to read all the way to the end.
 	{"1.00000000000000011102230246251565404236316680908203125" + strings.Repeat("0", 10000) + "1", "1.0000000000000002", nil},
+
+	// Halfways with short mantissas
+	{"2.3399415873862403e69", "2.3399415873862405e+69", nil},
+	// Halfway is 500016682268521616.00000000000001e229
+	{"500016682268521616e229", "5.000166822685216e+246", nil}, // 18 digits necessary
+	// Halfway is 1873795671212201760.9999999999999998e108
+	{"1873795671212201761e108", "1.873795671212202e+126", nil}, // 19 digits (61 bits) necessary
+	// Halfway is 10027399025072458413.99999999999998e140
+	{"10027399025072458414e140", "1.002739902507246e+159", nil}, // 20 digits (64 bits) necessary
 }
 
 var atof32tests = []atofTest{
@@ -285,8 +299,8 @@ func testAtof(t *testing.T, opt bool) {
 				t.Errorf("ParseFloat(%v, 32) = %v, not a float32 (closest is %v)", test.in, out, float64(out32))
 				continue
 			}
-			outs := FormatFloat(float64(out32), 'g', -1, 32)
-			if outs != test.out || !reflect.DeepEqual(err, test.err) {
+			outs32 := FormatFloat(float64(out32), 'g', -1, 32)
+			if outs == outs32 && (outs != test.out || !reflect.DeepEqual(err, test.err)) {
 				t.Errorf("ParseFloat(%v, 32) = %v, %v want %v, %v  # %v",
 					test.in, out32, err, test.out, test.err, out)
 			}
@@ -401,12 +415,20 @@ var atofBenches = []struct {
 	{"64Decimal", "33909", 64},
 	{"64Float", "339.7784", 64},
 	{"64FloatExp", "-5.09e75", 64},
+	{"64Int", "18446744073709551608", 64},
 	{"64Big", "123456789123456789123456789", 64},
 	{"64Denormal", "622666234635.3213e-320", 64},
 	{"32Decimal", "33909", 32},
 	{"32Float", "339.778", 32},
 	{"32FloatExp", "12.3456e32", 32},
 	// Numbers halfway (or close to halfway) between 2 floats
+	{"64Halfway", "2.3399415873862403e69", 64}, // 17 digits necessary
+	// Halfway is 500016682268521616.00000000000001e229
+	{"64Halfway2", "500016682268521616e229", 64}, // 18 digits necessary
+	// Halfway is 1873795671212201760.9999999999999998e108
+	{"64Halfway3", "1873795671212201761e108", 64}, // 19 digits (61 bits) necessary
+	// Halfway is 10027399025072458413.99999999999998e140
+	{"64Halfway4", "10027399025072458414e140", 64}, // 20 digits (64 bits) necessary
 	{"64HalfwayInt", "100000000000000016777215", 64},
 	{"64HalfwayInt", "100000000000000016777216", 64},
 	// Almost halfway, with less than 1e-16 ulp difference
