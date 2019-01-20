@@ -308,7 +308,7 @@ func ryuFixed(d *decimalSlice, mant uint64, exp int, prec int, flt *floatInfo) {
 	return
 }
 
-func ryuFromDecimal(mant uint64, exp int, flt *floatInfo) (fbits uint64, ovf, ok bool) {
+func ryuFromDecimal(mant uint64, exp int, flt *floatInfo) (fbits uint64, ovf bool) {
 	// Conversion from decimal to binary floating-point
 	// can be achieved by reusing the same building blocks
 	// as the Ryū algorithm.
@@ -332,9 +332,9 @@ func ryuFromDecimal(mant uint64, exp int, flt *floatInfo) (fbits uint64, ovf, ok
 	var pow *extfloat128 // a representation of 10^q
 	switch {
 	case exp > 309:
-		return 0x7ff << 52, true, true
+		return 0x7ff << 52, true
 	case exp < -342:
-		return 0, false, true
+		return 0, false
 	case exp > 0:
 		pow = &ryuPowersOfTen[exp]
 	case exp == 0:
@@ -384,7 +384,7 @@ func ryuFromDecimal(mant uint64, exp int, flt *floatInfo) (fbits uint64, ovf, ok
 		e2 = flt.bias + 1
 	}
 	if extra > uint(blen) {
-		return 0.0, false, true
+		return 0.0, false
 	}
 	// Compute correct rounding.
 	extramask := uint64(1<<extra - 1)
@@ -427,7 +427,7 @@ func ryuFromDecimal(mant uint64, exp int, flt *floatInfo) (fbits uint64, ovf, ok
 	// Assemble bits.
 	fbits = di & (uint64(1)<<flt.mantbits - 1)
 	fbits |= uint64((e2-flt.bias)&(1<<flt.expbits-1)) << flt.mantbits
-	return fbits, ovf, true
+	return fbits, ovf
 }
 
 func divisibleByPower5(m uint64, k int) bool {

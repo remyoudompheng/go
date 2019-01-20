@@ -193,7 +193,7 @@ var ryuAtofTests = []struct {
 
 func TestRyuFromDecimal(t *testing.T) {
 	for _, x := range ryuAtofTests {
-		b, _, _ := RyuFromDecimal(x.mant, x.exp, &Float64info)
+		b, _ := RyuFromDecimal(x.mant, x.exp, &Float64info)
 		f := math.Float64frombits(b)
 		if f != x.expect {
 			t.Errorf("parsing %de%d, expect %v (%b), got %v (%b)",
@@ -326,10 +326,10 @@ func TestRyuAtofRandom(t *testing.T) {
 		exp := (i % 640) - 342 // range (-342, 298)
 
 		fold := OldAtof(mant, exp)
-		bnew, _, ryuOk := RyuFromDecimal(mant, exp, &Float64info)
+		bnew, _ := RyuFromDecimal(mant, exp, &Float64info)
 		fnew := math.Float64frombits(bnew)
 
-		if !ryuOk || fold != fnew {
+		if fold != fnew {
 			t.Logf("%de%d old=%v new=%v", mant, exp, fold, fnew)
 			ko++
 		} else {
@@ -364,15 +364,13 @@ func TestRyuAtofCoverage(t *testing.T) {
 		// Compute decimal mantissa, exponent.
 		mant, exp := ReadFloat(s)
 		f1, ok1 := FastAtof(mant, exp)
-		b2, _, ok2 := RyuFromDecimal(mant, exp, &Float64info)
+		b2, _ := RyuFromDecimal(mant, exp, &Float64info)
 		f2 := math.Float64frombits(b2)
 		if ok1 {
 			oldOk++
 		}
-		if ok2 {
-			ryuOk++
-		}
-		if ok1 && ok2 && f1 != f2 {
+		ryuOk++
+		if ok1 && f1 != f2 {
 			t.Fatalf("inconsistent results %s => %v %v", s, f1, f2)
 		}
 	}
@@ -740,8 +738,8 @@ func BenchmarkRyuAtof(b *testing.B) {
 		b.Run(fmt.Sprintf("%de%d", c.mant, c.exp), func(b *testing.B) {
 			var v uint64
 			for i := 0; i < b.N; i++ {
-				f, ovf, ok := RyuFromDecimal(c.mant, c.exp, &Float64info)
-				if ovf || !ok {
+				f, ovf := RyuFromDecimal(c.mant, c.exp, &Float64info)
+				if ovf {
 					b.Fatal("could not parse")
 				}
 				v = f

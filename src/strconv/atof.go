@@ -490,8 +490,17 @@ func atof64(s string) (f float64, err error) {
 				}
 			}
 			// Try another fast path.
-			if ryuEnabled && !trunc {
-				b, ovf, ok := ryuFromDecimal(mantissa, exp, &float64info)
+			if ryuEnabled {
+				// Ryū-style method
+				b, ovf := ryuFromDecimal(mantissa, exp, &float64info)
+				ok := true
+				if trunc {
+					// check output for the rounded up mantissa.
+					b2, _ := ryuFromDecimal(mantissa+1, exp, &float64info)
+					if b != b2 {
+						ok = false
+					}
+				}
 				if ok {
 					f = math.Float64frombits(b)
 					if neg {
@@ -502,8 +511,8 @@ func atof64(s string) (f float64, err error) {
 					}
 					return f, err
 				}
-			}
-			if !ryuEnabled {
+			} else {
+				// Grisu3-style method
 				ext := new(extFloat)
 				if ok := ext.AssignDecimal(mantissa, exp, neg, trunc, &float64info); ok {
 					b, ovf := ext.floatBits(&float64info)
