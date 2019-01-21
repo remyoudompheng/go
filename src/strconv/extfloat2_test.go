@@ -129,6 +129,7 @@ func TestRyuFixed(t *testing.T) {
 		{4428582144510765, 15},   // 4.42858214451076e14
 		// Smallest denormal
 		{5e-324, 15}, // 4.94065645841247e-324
+		{5e-324, 18}, // 4.940656458412465442e-324
 	}
 	for _, test := range tests {
 		mant, exp := mantExp(test.x)
@@ -292,7 +293,8 @@ func TestRyuFtoaFixedRandom(t *testing.T) {
 			bits ^= (1 << 60)
 		}
 		x := math.Float64frombits(bits)
-		prec := int((uint64(i)*0xc0dedead)%16 + 1)
+		// Test precisions 15, 16, 17, 18.
+		prec := int(i%4) + 15
 
 		mant, exp := mantExp(x)
 
@@ -307,6 +309,46 @@ func TestRyuFtoaFixedRandom(t *testing.T) {
 			ko++
 		} else {
 			ok++
+		}
+	}
+	t.Logf("%d ok, %d ko", ok, ko)
+}
+
+func TestRyuFtoaFixedFloat32s(t *testing.T) {
+	// There are 38.5 billion runs to test (for each precision from 1 to 18)
+	ok, ko := 0, 0
+	step := uint32(3851) // about 1e7 iterations
+	if testing.Short() {
+		step = 38501 // about 1e6 iterations
+	}
+	t.Logf("testing 1/%dth of all non-negative finite floats32s", step)
+
+	dold := NewShortDecimal()
+	dnew := NewShortDecimal()
+	for i := uint32(0); i < 0xff<<23; i += step {
+		exp := int(i >> 23)
+		mant := i & (1<<23 - 1)
+		if exp == 0 {
+			exp = 1
+		} else {
+			mant |= 1 << 23
+		}
+		exp -= 127
+
+		for prec := 1; prec <= 18; prec++ {
+			// slow algo
+			oldFixed(&dold, uint64(mant), exp, prec)
+			// new algo
+			RyuFixed(&dnew, uint64(mant), exp, prec, &Float64info)
+
+			// compare
+			if !dold.Equals(&dnew) {
+				x := math.Float32frombits(i)
+				t.Logf("%b old=%s new=%s", x, ShowDecimal(&dold), ShowDecimal(&dnew))
+				ko++
+			} else {
+				ok++
+			}
 		}
 	}
 	t.Logf("%d ok, %d ko", ok, ko)
@@ -405,8 +447,8 @@ func mantExp(x float64) (mant uint64, exp int) {
 }
 
 func TestRyuPowersOfTen(t *testing.T) {
-	for q := int64(0); q <= 339; q++ {
-		// positive exponents (324 to 339) are needed for fixed
+	for q := int64(0); q <= 342; q++ {
+		// positive exponents (324 to 342) are needed for fixed
 		// precision handling of denormals
 		pow := big.NewInt(10)
 		pow = pow.Exp(pow, big.NewInt(q), nil)
@@ -457,9 +499,13 @@ func TestRyuPowersOfTen(t *testing.T) {
 
 // TestRyuExp2toExp10 checks that Exp2toExponent10(i) == math.Floor(i * log10(2))
 func TestRyuExp2toExp10(t *testing.T) {
-	for i := 1; i < 1600; i++ {
+	for i := -1600; i < 1600; i++ {
 		exact := math.Ln2 / math.Ln10 * float64(i)
-		approx := Exp2toExponent10(uint(i))
+		approx := Exp2toExponent10(i)
+
+		if i == 0 && approx == 0 {
+			continue
+		}
 
 		if exact < float64(approx)+0.0001 {
 			t.Fatalf("%d*log10(2): approx=%d, exact=%v",

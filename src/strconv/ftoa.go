@@ -52,7 +52,7 @@ func AppendFloat(dst []byte, f float64, fmt byte, prec, bitSize int) []byte {
 	return genericFtoa(dst, f, fmt, prec, bitSize)
 }
 
-var ryuEnabled = true
+const ryuEnabled = true
 
 func genericFtoa(dst []byte, val float64, fmt byte, prec, bitSize int) []byte {
 	var bits uint64
@@ -148,7 +148,7 @@ func genericFtoa(dst []byte, val float64, fmt byte, prec, bitSize int) []byte {
 		}
 		var buf [24]byte
 		digs.d = buf[:]
-		if ryuEnabled && digits <= 16 {
+		if ryuEnabled && digits <= 18 {
 			ryuFixed(&digs, mant, exp, digits, flt)
 			ok = true
 		} else if digits <= 15 {

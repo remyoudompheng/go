@@ -63,12 +63,11 @@ func ryuShortest(d *decimalSlice, mant uint64, exp int) {
 	var pow *extfloat128 // a representation of 10^q
 	if e2 < 0 {
 		// Find 10^q *larger* than 2^-e2
-		e := uint(-e2)
-		q = int(exp2toExponent10(e) + 1)
+		q = int(exp2toExponent10(-e2) + 1)
 		pow = &ryuPowersOfTen[q]
 	} else {
 		// Divide by a power of 10 strictly less than 2^e2
-		q = int(exp2toExponent10(uint(e2)) - 1)
+		q = int(exp2toExponent10(e2) - 1)
 		if q < 0 {
 			q = 0
 		}
@@ -126,7 +125,7 @@ func ryuShortest(d *decimalSlice, mant uint64, exp int) {
 	// The 64 upper bits of the product are more than needed for
 	// floor((l,c,u)*10^q). The floating-point exponent of
 	// the product e2+pow.Exp+64+55.
-	extra := uint(-(e2 + pow.Exp + 64 + 55))
+	extra := uint(-(e2 + pow.Exp + ryuMultiplyShift))
 	extramask := uint64(1<<extra - 1)
 	// Now compute the floored, integral base 10 mantissas.
 	dl, fracl := dl>>extra, dl&extramask
@@ -170,10 +169,10 @@ func ryuShortest(d *decimalSlice, mant uint64, exp int) {
 }
 
 // ryuFixed is a variation of the original Ryu algorithm for fixed precision
-// output. It can output 16 digits reliably.
+// output. It can output 18 digits reliably.
 func ryuFixed(d *decimalSlice, mant uint64, exp int, prec int, flt *floatInfo) {
-	if prec > 16 {
-		panic("ryuFixed called with prec > 16")
+	if prec > 18 {
+		panic("ryuFixed called with prec > 18")
 	}
 	// Fixed precision output proceeds as shortest output
 	// except that we don't compute bounds, and that denormals
@@ -188,28 +187,26 @@ func ryuFixed(d *decimalSlice, mant uint64, exp int, prec int, flt *floatInfo) {
 	}
 	// substract mantbits to interpret mantissa as integer
 	e2 := exp - int(flt.mantbits)
-	// renormalize denormals to a 53-bit mantissa.
+	// renormalize denormals (and float32s) to a 53-bit mantissa.
 	if b := bits.Len64(mant); b < 53 {
 		mant = mant << uint(53-b)
 		e2 += int(b) - 53
 	}
-	// multiply by a power of 10. It is required to know
-	// whether the computation is exact.
-	var q int
+	// multiply by a power of 10, such that mant*2^e2*10^q
+	// is guaranteed to be larger than 10^(prec-1), i.e
+	//     2^(mantbits+e2) >= 10^(-q+prec-1)
+	// or q = -exp2toExponent10(mantbits+e2) + prec - 1
+	//
+	// The maximal required exponent is exp2toExponent10(1074)+18 = 342
+	q := -exp2toExponent10(e2+52) + prec - 1
 	var pow *extfloat128 // a representation of 10^q
-	if e2 < 0 {
-		// Find 10^q *larger* than 2^-exp
-		e := uint(-e2)
-		q = int(exp2toExponent10(e) + 1)
+	if q >= 0 {
+		if q >= len(ryuPowersOfTen) {
+			println(q)
+		}
 		pow = &ryuPowersOfTen[q]
 	} else {
-		// Divide by a power of 10 strictly less than 2^exp
-		q = int(exp2toExponent10(uint(e2)) - 1)
-		if q < 0 {
-			q = 0
-		}
-		pow = &ryuInvPowersOfTen[q]
-		q = -q
+		pow = &ryuInvPowersOfTen[-q]
 	}
 	// Is it an exact computation?
 	exact := false
@@ -229,9 +226,18 @@ func ryuFixed(d *decimalSlice, mant uint64, exp int, prec int, flt *floatInfo) {
 		// as 5^23 has 54 bits.
 	}
 
-	// Compute Floor(x*10^q)
+	// Compute Floor(x*10^q). Optimal use of ryuMultiply
+	// is for 55-bit inputs, so we shift mant again.
+	mant <<= 2
+	e2 -= 2
+	// Since 10^(prec-1) <= x*10^q < 2*10^prec, it may be required
+	// to divide by 10. The result of ryuMultiply is
+	// 63 or 64 bits large, so we can guarantee only 18 digits.
 	di, d0 := ryuMultiply(mant, pow.Hi, pow.Lo)
-	dexp2 := e2 + pow.Exp + 64 + 55
+	dexp2 := e2 + pow.Exp + ryuMultiplyShift
+	if dexp2 >= 0 {
+		panic("not enough significant bits after ryuMultiply")
+	}
 	// If computation was an exact division, lower bits must be ignored.
 	if q < 0 && exact {
 		d0 = true
@@ -257,17 +263,7 @@ func ryuFixed(d *decimalSlice, mant uint64, exp int, prec int, flt *floatInfo) {
 		d0 = false
 	}
 	// Proceed to the requested number of digits
-	size := 16
 	max := uint64pow10[prec]
-	if di > max {
-		// We reduce to exactly prec digits.
-		size = prec
-	} else {
-		// d is larger than the original 53-bit mantissa
-		// so has at least 16 digits. But prec <= 16,
-		// so d has 16 digits exactly.
-		size = 16
-	}
 	trimmed := 0
 	for di >= max {
 		a, b := di/10, di%10
@@ -292,8 +288,8 @@ func ryuFixed(d *decimalSlice, mant uint64, exp int, prec int, flt *floatInfo) {
 		trimmed++
 	}
 	// render digits
-	n := uint(size)
-	d.nd = int(size)
+	n := uint(prec)
+	d.nd = int(prec)
 	for v := di; v > 0; {
 		v1, v2 := v/10, v%10
 		v = v1
@@ -583,12 +579,12 @@ func computeBounds(mant uint64, exp int) (lower, central, upper uint64, e2 int) 
 }
 
 // exp2toExponent10 returns q = math.Floor(e * log10(2))
-func exp2toExponent10(e uint) uint {
-	if e > 1600 {
-		panic("out of approx range")
+func exp2toExponent10(e int) int {
+	if e > 1600 || e < -1600 {
+		panic("out of approx range " + Itoa(int(e)))
 	}
 	// log10(2) = 0.3010299956639812 = 78913.207... / 2**18
-	return (e * 78913) >> 18
+	return (e * 78913) >> 18 // even for negative e
 }
 
 // ryuMultiply returns the 63 or 64 highest bits of the product:
@@ -604,6 +600,8 @@ func ryuMultiply(mant uint64, hi, lo uint64) (uint64, bool) {
 	h1 += carry
 	return h1<<9 | mid>>55, mid<<9 == 0 && l0 == 0
 }
+
+const ryuMultiplyShift = 119
 
 // ryuMultiply2 is like ryuMultiply but takes a 64-bit multiplier
 // and returns at least 54 bits from the full product which is
@@ -969,6 +967,9 @@ var ryuPowersOfTen = [...]extfloat128{
 	{Hi: 0xb3bd72ed2af29e1f, Lo: 0xa988e2cd4f62d19d, Exp: 992},
 	{Hi: 0xe0accfa875af45a7, Lo: 0x93eb1b80a33b8605, Exp: 995},
 	{Hi: 0x8c6c01c9498d8b88, Lo: 0xbc72f130660533c3, Exp: 999},
+	{Hi: 0xaf87023b9bf0ee6a, Lo: 0xeb8fad7c7f8680b4, Exp: 1002},
+	{Hi: 0xdb68c2ca82ed2a05, Lo: 0xa67398db9f6820e1, Exp: 1005},
+	{Hi: 0x892179be91d43a43, Lo: 0x88083f8943a1148c, Exp: 1009},
 }
 
 // ryuInvPowersOfTen[q] stores floating-point representations of 1/10^q,
