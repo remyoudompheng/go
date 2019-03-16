@@ -461,14 +461,13 @@ func TestRyuPowersOfTen(t *testing.T) {
 		digits := pow.Bytes()
 		hi := new(big.Int).SetBytes(digits[:8]).Uint64()
 		lo := new(big.Int).SetBytes(digits[8:]).Uint64()
-		exp := sz - 128
-		expect := ExtFloat128{Hi: hi, Lo: lo, Exp: exp}
+		expect := [2]uint64{hi, lo}
 		if int(q) >= len(RyuPowersOfTen) || RyuPowersOfTen[q] != expect {
 			t.Errorf("wrong entry, wants %#v", expect)
 		}
 	}
 
-	for q := 0; q < 344; q++ {
+	for q := 1; q < 344; q++ {
 		// negative exponents
 		// Let's compute 2^128 * 8^q / 5^q, which is never an integer
 		pow := big.NewInt(5)
@@ -489,8 +488,7 @@ func TestRyuPowersOfTen(t *testing.T) {
 		if q > 0 {
 			lo++ // round up
 		}
-		exp := sz - 256 - 4*q
-		expect := ExtFloat128{Hi: hi, Lo: lo, Exp: exp}
+		expect := [2]uint64{hi, lo}
 		if int(q) >= len(RyuInvPowersOfTen) || RyuInvPowersOfTen[q] != expect {
 			t.Errorf("wrong entry, wants %#v", expect)
 		}
@@ -603,6 +601,7 @@ func TestRyuMultiplyCarry(t *testing.T) {
 			// we already know that.
 			continue
 		}
+		pow := ExtFloat128{Hi: pow[0], Lo: pow[1], Exp: (-int(exp)*108853)>>15 - 127}
 		check(55, 63, pow, -exp) // for ftoa, right shift by 119
 		check(62, 54, pow, -exp) // for atof, right shift by 135
 	}
@@ -610,6 +609,7 @@ func TestRyuMultiplyCarry(t *testing.T) {
 		if exp < 50 {
 			continue // exact power of ten, no problem.
 		}
+		pow := ExtFloat128{Hi: pow[0], Lo: pow[1], Exp: (int(exp)*108853)>>15 - 127}
 		check(55, 63, pow, exp) // for ftoa, right shift by 119
 		check(62, 54, pow, exp) // for atof, right shift by 135
 	}

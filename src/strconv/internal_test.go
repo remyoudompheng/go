@@ -35,8 +35,8 @@ var (
 	RyuShortest       = ryuShortest
 	RyuFixed          = ryuFixed
 	RyuFromDecimal    = ryuFromDecimal
-	RyuPowersOfTen    = &ryuPowersOfTen
-	RyuInvPowersOfTen = &ryuInvPowersOfTen
+	RyuPowersOfTen    = &pow10wide
+	RyuInvPowersOfTen = &invpow10wide
 	Exp2toExponent10  = exp2toExponent10
 )
 
