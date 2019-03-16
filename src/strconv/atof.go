@@ -451,14 +451,38 @@ func atof32(s string) (f float32, err error) {
 				}
 			}
 			// Try another fast path.
-			ext := new(extFloat)
-			if ok := ext.AssignDecimal(mantissa, exp, neg, trunc, &float32info); ok {
-				b, ovf := ext.floatBits(&float32info)
-				f = math.Float32frombits(uint32(b))
-				if ovf {
-					err = rangeError(fnParseFloat, s)
+			if ryuEnabled {
+				// Ryū-style method
+				b, ovf := ryuFromDecimal32(mantissa, exp)
+				ok := true
+				if trunc {
+					// check output for the rounded up mantissa.
+					b2, _ := ryuFromDecimal32(mantissa+1, exp)
+					if b != b2 {
+						ok = false
+					}
 				}
-				return f, err
+				if ok {
+					f = math.Float32frombits(b)
+					if neg {
+						f = -f
+					}
+					if ovf {
+						err = rangeError(fnParseFloat, s)
+					}
+					return f, err
+				}
+			} else {
+				// Grisu3 method
+				ext := new(extFloat)
+				if ok := ext.AssignDecimal(mantissa, exp, neg, trunc, &float32info); ok {
+					b, ovf := ext.floatBits(&float32info)
+					f = math.Float32frombits(uint32(b))
+					if ovf {
+						err = rangeError(fnParseFloat, s)
+					}
+					return f, err
+				}
 			}
 		}
 	}
