@@ -566,11 +566,29 @@ func atof32(s string) (f float32, err error) {
 				return f, nil
 			}
 		}
-		// Try another fast path.
-		ext := new(extFloat)
-		if ok := ext.AssignDecimal(mantissa, exp, neg, trunc, &float32info); ok {
-			b, ovf := ext.floatBits(&float32info)
+		// Try Ryū-style method (float32).
+		ok := true
+		var b uint64
+		var ovf bool
+		if mantissa>>31 == 0 && !trunc {
+			// Ryu atof32 method.
+			b, ovf = ryuAtof32(uint32(mantissa), exp)
+		} else {
+			// Ryū atof64 method.
+			b, ovf = ryuAtof64(mantissa, exp, &float32info)
+			if trunc {
+				// check output for the rounded up mantissa.
+				b2, _ := ryuAtof64(mantissa+1, exp, &float32info)
+				if b != b2 {
+					ok = false
+				}
+			}
+		}
+		if ok {
 			f = math.Float32frombits(uint32(b))
+			if neg {
+				f = -f
+			}
 			if ovf {
 				err = rangeError(fnParseFloat, s)
 			}
@@ -608,11 +626,21 @@ func atof64(s string) (f float64, err error) {
 				return f, nil
 			}
 		}
-		// Try another fast path.
-		ext := new(extFloat)
-		if ok := ext.AssignDecimal(mantissa, exp, neg, trunc, &float64info); ok {
-			b, ovf := ext.floatBits(&float64info)
+		// Try Ryū-style method.
+		ok := true
+		b, ovf := ryuAtof64(mantissa, exp, &float64info)
+		if trunc {
+			// check output for the rounded up mantissa.
+			b2, _ := ryuAtof64(mantissa+1, exp, &float64info)
+			if b != b2 {
+				ok = false
+			}
+		}
+		if ok {
 			f = math.Float64frombits(b)
+			if neg {
+				f = -f
+			}
 			if ovf {
 				err = rangeError(fnParseFloat, s)
 			}

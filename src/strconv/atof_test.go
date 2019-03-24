@@ -412,6 +412,9 @@ var atof32tests = []atofTest{
 	{"0x0.0000008p-125", "0", nil},             // rounded down
 	{"0x0.0000007p-125", "0", nil},             // rounded down
 
+	// Not so many digits but hard to round correctly.
+	{"376122878645e-046", "3.761229e-35", nil},
+
 	// 2^92 = 8388608p+69 = 4951760157141521099596496896 (4.9517602e27)
 	// is an exact power of two that needs 8 decimal digits to be correctly
 	// parsed back.
@@ -624,9 +627,21 @@ func BenchmarkAtof64FloatExp(b *testing.B) {
 	}
 }
 
+func BenchmarkAtof64FloatExact(b *testing.B) {
+	for i := 0; i < b.N; i++ {
+		ParseFloat("1.1920928955078125", 64)
+	}
+}
+
 func BenchmarkAtof64Big(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		ParseFloat("123456789123456789123456789", 64)
+	}
+}
+
+func BenchmarkAtof64Hard(b *testing.B) {
+	for i := 0; i < b.N; i++ {
+		ParseFloat("4.334126125515466e-210", 64)
 	}
 }
 
@@ -657,6 +672,12 @@ func BenchmarkAtof32Float(b *testing.B) {
 func BenchmarkAtof32FloatExp(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		ParseFloat("12.3456e32", 32)
+	}
+}
+
+func BenchmarkAtof32FloatHard(b *testing.B) {
+	for i := 0; i < b.N; i++ {
+		ParseFloat("376122878645e-046", 32)
 	}
 }
 
