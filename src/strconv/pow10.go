@@ -369,9 +369,10 @@ var pow10wide = [...][2]uint64{
 	{0x892179be91d43a43, 0x88083f8943a1148c},
 }
 
-// invpow10wide is the table 128-bit floating-point mantissas of 10^-q
-// for non-negative q. The mantissas are stored as [2]uint64
-// in a big endian way. They are always rounded up.
+// invpow10wide is the table of 128-bit floating-point mantissas of 10^-q
+// for q > 0. The mantissas are stored as [2]uint64 in a big endian way.
+// They are always rounded up, so that even exact divisions n / 10^q
+// can be computed using the "multiply high and shift right" technique.
 //
 // invpow10wide[q] = Ceil(1 << (128 + Floor(q * log2(10))) / 10^q)
 //
