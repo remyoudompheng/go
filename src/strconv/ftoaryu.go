@@ -194,7 +194,7 @@ func ryuFtoaFixed64(d *decimalSlice, mant uint64, exp int, prec int) {
 	max := uint64pow10[prec]
 	trimmed := 0
 	for di >= max {
-		a, b := di/10, di%10
+		a, b := divmod10(di)
 		di = a
 		trimmed++
 		if b > 5 {
@@ -212,7 +212,7 @@ func ryuFtoaFixed64(d *decimalSlice, mant uint64, exp int, prec int) {
 	}
 	if di >= max {
 		// Happens if di was originally 99999....xx
-		di = di / 10
+		di, _ = divmod10(di)
 		trimmed++
 	}
 	// render digits (similar to formatBits)
@@ -220,7 +220,7 @@ func ryuFtoaFixed64(d *decimalSlice, mant uint64, exp int, prec int) {
 	d.nd = int(prec)
 	v := di
 	for v >= 100 {
-		v1, v2 := v/100, v%100
+		v1, v2 := divmod100(v)
 		n -= 2
 		d.d[n+1] = smallsString[2*v2+1]
 		d.d[n+0] = smallsString[2*v2+0]
@@ -377,9 +377,9 @@ func computeBounds(mant uint64, exp int, flt *floatInfo) (lower, central, upper 
 
 func ryuDigits(d *decimalSlice, lower, central, upper uint64,
 	c0, cup bool) {
-	lhi, llo := uint32(lower/1e9), uint32(lower%1e9)
-	chi, clo := uint32(central/1e9), uint32(central%1e9)
-	uhi, ulo := uint32(upper/1e9), uint32(upper%1e9)
+	lhi, llo := divmod1e9(lower)
+	chi, clo := divmod1e9(central)
+	uhi, ulo := divmod1e9(upper)
 	if uhi == 0 {
 		// only low digits (for denormals)
 		ryuDigits32(d, llo, clo, ulo,
@@ -538,4 +538,35 @@ func mult128bitPow10(m uint64, e2 int, e10 int) (uint64, int, bool) {
 	mid, carry := bits.Add64(l1, h0, 0)
 	h1 += carry
 	return h1<<9 | mid>>55, e2, mid<<9 == 0 && l0 == 0
+}
+
+func divmod10(x uint64) (uint64, uint64) {
+	if !host32bit {
+		return x / 10, x % 10
+	}
+	// Avoid runtime long division.
+	hi, _ := bits.Mul64(x, 0xcccccccccccccccd)
+	q := hi >> 3
+	return q, x - q*10
+}
+
+func divmod100(x uint64) (uint64, uint64) {
+	if !host32bit {
+		return x / 100, x % 100
+	}
+	// Avoid runtime long division.
+	hi, _ := bits.Mul64(x, 0xa3d70a3d70a3d70b)
+	q := hi >> 6
+	return q, x - q*100
+}
+
+func divmod1e9(x uint64) (uint32, uint32) {
+	if !host32bit {
+		return uint32(x / 1e9), uint32(x % 1e9)
+	}
+	// Avoid runtime long division using the same code as the amd64 compiler.
+	// The magic constant is invpow10wide[9][0]+1
+	hi, _ := bits.Mul64(x>>1, 0x89705f4136b4a598)
+	q := hi >> 28
+	return uint32(q), uint32(x - q*1e9)
 }

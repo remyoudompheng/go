@@ -223,11 +223,21 @@ func ryuFloatBits(di uint64, e2 int, exact bool, flt *floatInfo) (fbits uint64, 
 
 func divisibleByPower5(m uint64, k int) bool {
 	for i := 0; i < k; i++ {
-		a, b := m/5, m%5
+		a, b := divmod5(m)
 		if b != 0 {
 			return false
 		}
 		m = a
 	}
 	return true
+}
+
+func divmod5(x uint64) (uint64, uint64) {
+	if !host32bit {
+		return x / 5, x % 5
+	}
+	// Avoid runtime long division.
+	hi, _ := bits.Mul64(x, 0xcccccccccccccccd)
+	q := hi >> 2
+	return q, x - q*5
 }
