@@ -2,7 +2,7 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-// +build amd64 arm64
+// +build amd64 arm arm64
 
 package aes
 
@@ -10,6 +10,8 @@ import (
 	"crypto/cipher"
 	"crypto/internal/subtle"
 	"internal/cpu"
+	"math/bits"
+	"runtime"
 )
 
 // defined in asm_*.s
@@ -27,7 +29,7 @@ type aesCipherAsm struct {
 	aesCipher
 }
 
-var supportsAES = cpu.X86.HasAES || cpu.ARM64.HasAES
+var supportsAES = cpu.X86.HasAES || cpu.ARM64.HasAES || cpu.ARM.HasAES
 var supportsGFMUL = cpu.X86.HasPCLMULQDQ || cpu.ARM64.HasPMULL
 
 func newCipher(key []byte) (cipher.Block, error) {
@@ -46,7 +48,16 @@ func newCipher(key []byte) (cipher.Block, error) {
 		rounds = 14
 	}
 
-	expandKeyAsm(rounds, &key[0], &c.enc[0], &c.dec[0])
+	if runtime.GOARCH == "arm" {
+		expandKeyGo(key, c.enc, c.dec)
+		// byteswap every word for ASM code
+		for i := 0; i < n; i++ {
+			c.enc[i] = bits.ReverseBytes32(c.enc[i])
+			c.dec[i] = bits.ReverseBytes32(c.dec[i])
+		}
+	} else {
+		expandKeyAsm(rounds, &key[0], &c.enc[0], &c.dec[0])
+	}
 	if supportsAES && supportsGFMUL {
 		return &aesCipherGCM{c}, nil
 	}
@@ -84,7 +95,7 @@ func (c *aesCipherAsm) Decrypt(dst, src []byte) {
 // expandKey is used by BenchmarkExpand to ensure that the asm implementation
 // of key expansion is used for the benchmark when it is available.
 func expandKey(key []byte, enc, dec []uint32) {
-	if supportsAES {
+	if runtime.GOARCH != "arm" && supportsAES {
 		rounds := 10 // rounds needed for AES128
 		switch len(key) {
 		case 192 / 8:
@@ -95,5 +106,13 @@ func expandKey(key []byte, enc, dec []uint32) {
 		expandKeyAsm(rounds, &key[0], &enc[0], &dec[0])
 	} else {
 		expandKeyGo(key, enc, dec)
+		if supportsAES {
+			// AES rounds are performed in assembly,
+			// we need to byteswap every word for ASM code
+			for i := 0; i < len(enc); i++ {
+				enc[i] = bits.ReverseBytes32(enc[i])
+				dec[i] = bits.ReverseBytes32(dec[i])
+			}
+		}
 	}
 }
