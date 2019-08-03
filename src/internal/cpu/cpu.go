@@ -70,6 +70,11 @@ type arm struct {
 	_        CacheLinePad
 	HasVFPv4 bool
 	HasIDIVA bool
+	HasAES   bool
+	HasPMULL bool
+	HasSHA1  bool
+	HasSHA2  bool
+	HasCRC32 bool
 	_        CacheLinePad
 }
 
